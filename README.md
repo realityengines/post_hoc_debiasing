@@ -14,6 +14,14 @@ In this work we introduce three new fine-tuning techniques to reduce bias in a p
 
 ## Run a Post-Hoc debiasing experiment
 
+### Step 0 - Install requirements
+
+Install the requirements using 
+
+```
+$ pip install -r requirements.txt
+```
+
 ### Step 1 - Create Configs
 Create a config yaml file required to run the experiment by running 
 
@@ -26,6 +34,14 @@ $ python create_configs.py adult spd 1 10
 ```
 
 Where dataset is one of "adult" (ACI), "bank" (BM), or "compas" (COMPAS), bias measure is one of "spd" (statistical), "eod" (equal opportunity difference), or "aod" (average odds difference), protected variable is one of 1, 2 and number of replications is any positive integer depending on the desired test power. This will create a config directory `<dataset>_<bias measure>_<protected variable>` (for example `adult_spd_1`) including all the corresponding config files for the experiment.
+
+A table describing the relationship between protected variable index and dataset is given below.
+
+| dataset   | 1   | 2    |
+|:----------|:----|:-----|
+| adult     | sex | race |
+| compas    | sex | race |
+| bank      | age | race |
 
 If you want to automatically create all 12 experiments used in the paper run
 
@@ -53,10 +69,9 @@ To an analyze the results of the experiments and get the plots shown below you c
 
 
 <p align="center">
-  <img src="analysis/images/spd_results.png" alt="spd-results-debiasing" width="24%">
-  <img src="analysis/images/eod_results.png" alt="eod-results-debiasing" width="24%">
-  <img src="analysis/images/aod_results.png" alt="aod-results-debiasing" width="24%">
-  <img src="analysis/images/multinet_results.png" alt="multinet-results-debiasing" width="24%">
+  <img src="analysis/images/spd_results.png" alt="spd-results-debiasing" width="32%">
+  <img src="analysis/images/pareto_plot_BM (age)_spd.png" alt="eod-results-debiasing" width="32%">
+  <img src="analysis/images/multinet_bm_results.png" alt="multinet-results-debiasing" width="32%">
 </p>
 
 ### Step 4 - Cleanup configs
