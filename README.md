@@ -53,10 +53,10 @@ To an analyze the results of the experiments and get the plots shown below you c
 
 
 <p align="center">
-  <img src="images/spd_results.png" alt="spd-results-debiasing" width="24%">
-  <img src="images/eod_results.png" alt="eod-results-debiasing" width="24%">
-  <img src="images/aod_results.png" alt="aod-results-debiasing" width="24%">
-  <img src="images/multinet_results.png" alt="multinet-results-debiasing" width="24%">
+  <img src="analysis/images/spd_results.png" alt="spd-results-debiasing" width="24%">
+  <img src="analysis/images/eod_results.png" alt="eod-results-debiasing" width="24%">
+  <img src="analysis/images/aod_results.png" alt="aod-results-debiasing" width="24%">
+  <img src="analysis/images/multinet_results.png" alt="multinet-results-debiasing" width="24%">
 </p>
 
 ### Step 4 - Cleanup configs
