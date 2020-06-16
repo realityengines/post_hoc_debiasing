@@ -1,7 +1,8 @@
 # Post-Hoc Methods for Debiasing Neural Networks
 
-Post-Hoc Methods for Debiasing Neural Networks
-Yash Savani, Colin White, Naveen Sundar G
+[Post-Hoc Methods for Debiasing Neural Networks](https://arxiv.org/abs/2006.08564)\
+Yash Savani, Colin White, Naveen Sundar Govindarajulu.\
+_arXiv:2006.08564_.
 
 ## Three New Post-Hoc Techniques
 In this work, we introduce three new fine-tuning techniques to reduce bias in pretrained neural networks: random perturbation, layer-wise optimization, and adversarial fine-tuning. All three techniques work for any group fairness constraint. We include code that compares our three proposed methods with three popular post-processing methods, across three datasets provided by [aif360](https://aif360.readthedocs.io/en/latest/modules/datasets.html), and three popular bias measures.
@@ -15,15 +16,12 @@ In this work, we introduce three new fine-tuning techniques to reduce bias in pr
 - numba
 - jupyter
 
-## Run a Post-Hoc debiasing experiment
-
-### Step 0 - Install requirements
-
 Install the requirements using 
-
 ```
 $ pip install -r requirements.txt
 ```
+
+## Run a Post-Hoc debiasing experiment
 
 ### Step 1 - Create Configs
 Create a config yaml file required to run the experiment by running 
@@ -36,9 +34,9 @@ For example:
 $ python create_configs.py adult spd 1 10
 ```
 
-where dataset is one of "adult" (ACI), "bank" (BM), or "compas" (COMPAS), bias measure is one of "spd" (statistical parity difference), "eod" (equal opportunity difference), or "aod" (average odds difference), protected variable is one of 1 (gender), 2 (race), and the number of replications is any positive integer depending on the desired test power. This will create a config directory `<dataset>_<bias measure>_<protected variable>` (for example `adult_spd_1`) including all the corresponding config files for the experiment.
+where <dataset> is one of "adult" (ACI), "bank" (BM), or "compas" (COMPAS), <bias measure> is one of "spd" (statistical parity difference), "eod" (equal opportunity difference), or "aod" (average odds difference), <protected variable> is 1 or 2 (described below), and <number of replications> is the number of trials to run, which can be any positive integer. This will create a config directory `<dataset>_<bias measure>_<protected variable>` (for example `adult_spd_1`) including all the corresponding config files for the experiment.
 
-A table describing the relationship between protected variable index and dataset is given below.
+A table describing the relationship between the protected variable index and dataset is given below.
 
 | dataset   | 1   | 2    |
 |:----------|:----|:-----|
@@ -46,7 +44,7 @@ A table describing the relationship between protected variable index and dataset
 | compas    | sex | race |
 | bank      | age | race |
 
-If you want to automatically create all 12 experiments used in the paper run
+To automatically create all 12 experiments used in the paper, run
 
 ```
 $ bash create_all_configs.sh
@@ -68,7 +66,7 @@ This will run a `posthoc.py` experiment for each config file in the config direc
 The `posthoc.py` includes benchmark code for the 3 post-processing debiasing techniques provided by the [aif360](https://aif360.readthedocs.io/en/latest/modules/algorithms.html#module-aif360.algorithms.postprocessing) framework: reject option classification, equalized odds postprocessing, and calibrated equalized odds postprocessing. It also includes code for the random perturbation, and adversarial fine-tuning algorithms. To get results for the layer-wise optimization technique, follow the instructions in the deco directory.
 
 ### Step 3 - Analyze Results
-To an analyze the results of the experiments and get the plots shown below you can run through the `analyze_results.ipynb` jupyter notebook.
+To analyze the results of the experiments and get the plots shown below you can run through the `analyze_results.ipynb` jupyter notebook.
 
 
 <p align="center">
