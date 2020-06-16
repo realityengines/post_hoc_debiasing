@@ -7,6 +7,10 @@ _arXiv:2006.08564_.
 ## Three New Post-Hoc Techniques
 In this work, we introduce three new fine-tuning techniques to reduce bias in pretrained neural networks: random perturbation, layer-wise optimization, and adversarial fine-tuning. All three techniques work for any group fairness constraint. We include code that compares our three proposed methods with three popular post-processing methods, across three datasets provided by [aif360](https://aif360.readthedocs.io/en/latest/modules/datasets.html), and three popular bias measures.
 
+<p align="center">
+<img src="analysis/images/debias_fig.png" alt="debias_fig" width="99%">
+</p>
+
 ## Requirements
 - pyyaml
 - numpy
