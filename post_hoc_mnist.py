@@ -13,7 +13,7 @@ from torchvision import models, transforms
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def load_mnist():
+def load_mnist(num_workers=2):
     transform = transforms.Compose(
         [transforms.ToTensor(),
          transforms.Normalize((0.2860), (0.3530))])  # Precalculated based on test dataset
@@ -23,14 +23,31 @@ def load_mnist():
 
     trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
-                                              shuffle=True, num_workers=2)
+                                              shuffle=True, num_workers=num_workers)
     valloader = torch.utils.data.DataLoader(valset, batch_size=4,
-                                            shuffle=True, num_workers=2)
+                                            shuffle=True, num_workers=num_workers)
 
     testset = torchvision.datasets.FashionMNIST(root='./data', train=False,
                                                 download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=4,
-                                             shuffle=False, num_workers=2)
+                                             shuffle=False, num_workers=num_workers)
+    return trainset, valset, testset, trainloader, valloader, testloader
+
+def load_celeba(num_workers=2):
+    transform = transforms.ToTensor()
+
+    trainset = torchvision.datasets.CelebA(root='./data', download=True, split='train', transform=transform)
+
+    trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
+                                              shuffle=True, num_workers=num_workers)
+    valloader = torch.utils.data.DataLoader(valset, batch_size=4,
+                                            shuffle=True, num_workers=num_workers)
+
+    testset = torchvision.datasets.CelebA(root='./data', split='test',
+                                                download=True, transform=transform)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=4,
+                                             shuffle=False, num_workers=num_workers)
     return trainset, valset, testset, trainloader, valloader, testloader
 
 
@@ -139,6 +156,8 @@ def train_model(net, trainloader, valloader, criterion, optimizer):
 
 def main():
     trainset, valset, tetstset, trainloader, valloader, testloader = load_mnist()
+    #trainset, valset, tetstset, trainloader, valloader, testloader = load_celeba()
+
     net = Model()
     net.to(device)
     criterion = nn.BCEWithLogitsLoss()
