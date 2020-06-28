@@ -13,10 +13,15 @@ from torchvision import models, transforms
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def load_celeba(num_workers=2):
+def load_celeba(num_workers=2, trainsize=10000):
     transform = transforms.ToTensor()
 
     trainset = torchvision.datasets.CelebA(root='./data', download=True, split='train', transform=transform)
+
+    np.random.seed(0)
+    if trainsize >= 0:
+        # cut down the training set
+        trainset, _ = torch.utils.data.random_split(trainset, [trainsize, len(trainset) - trainsize])
 
     trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
@@ -61,14 +66,6 @@ class Model(nn.Module):
         for s in size:
             num_features *= s
         return num_features
-
-
-def add_bias(labels):
-    ytrue = (labels % 2).type(torch.float32)  # {0,1}
-    rand = 2*(torch.rand(4).to(device) > 0.01) - 1  # {-1,1}
-    delta = (rand * (2*ytrue-1)).reshape(labels.size(0), 1, 1, 1)  # {-1,1}
-    delta = ((delta+1) // 2)  # {0, 1}
-    return ytrue, delta
 
 
 def val_run(model, valloader, criterion):
@@ -127,12 +124,13 @@ def get_single_attr(labels, attr='Attractive'):
     return attrs
 
 
-def train_model(net, trainloader, valloader, criterion, optimizer):
-    for epoch in range(2):  # loop over the dataset multiple times
+def train_model(net, trainloader, valloader, criterion, optimizer, epochs=2):
+    for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
         for i, data in enumerate(trainloader, 0):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data[0].to(device), data[1].to(device)
+            # convert the labels into a single attribute
             ytrue = get_single_attr(labels)
 
             # zero the parameter gradients
@@ -157,7 +155,6 @@ def main():
     trainset, valset, tetstset, trainloader, valloader, testloader = load_celeba()
     print('loaded data')
 
-
     net = Model()
     net.to(device)
     criterion = nn.BCEWithLogitsLoss()
@@ -168,25 +165,26 @@ def main():
     ypred_test = []
     protected = []
 
+    # compute test predictions/truth/protected feature
     with torch.no_grad():
         for data in testloader:
             images, labels = data[0].to(device), data[1].to(device)
-            ytrue, delta = get_single_attr(labels)
+            y_true = get_single_attr(labels)
             protected_label = get_single_attr(labels, attr='Male')
             outputs = net(images).squeeze(-1)
-            y_test.append(ytrue)
+            y_test.append(y_true)
             ypred_test.append(torch.sigmoid(outputs))
             protected.append(protected_label)
 
     y_test = torch.cat(y_test).cpu().numpy()
-    print(y_test)
-
     ypred_test = torch.cat(ypred_test).cpu().numpy()
-    print(ypred_test)
-
     protected = torch.cat(protected).cpu().numpy()
-    print(protected)
 
+    #print(y_test)
+    #print(ypred_test)
+    #print(protected)
+    print('accuracy', (y_test == ypred_test).mean().item())
+    print('roc auc', roc_auc_score(y_test, ypred_test))
 
     # todo: compute the bias
     fpr, tpr, thresholds = roc_curve(y_test, ypred_test)
