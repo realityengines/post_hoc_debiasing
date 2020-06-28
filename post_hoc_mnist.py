@@ -33,6 +33,7 @@ def load_mnist(num_workers=2):
                                              shuffle=False, num_workers=num_workers)
     return trainset, valset, testset, trainloader, valloader, testloader
 
+
 def load_celeba(num_workers=2):
     transform = transforms.ToTensor()
 
@@ -45,7 +46,7 @@ def load_celeba(num_workers=2):
                                             shuffle=True, num_workers=num_workers)
 
     testset = torchvision.datasets.CelebA(root='./data', split='test',
-                                                download=True, transform=transform)
+                                          download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=4,
                                              shuffle=False, num_workers=num_workers)
     return trainset, valset, testset, trainloader, valloader, testloader
@@ -197,6 +198,35 @@ def main():
     accuracy_score(y_test, ypred_test > best_thresh)
 
     print(abs(compute_bias(ypred_test > best_thresh, y_test, deltas, 'aod')))
+
+    rand_result = [math.inf, None, -1]
+    rand_model = Model()
+    for iteration in range(101):
+        rand_model.load_state_dict(net.state_dict())
+        rand_model.to(device)
+        for param in rand_model.parameters():
+            param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
+
+        rand_model.eval()
+        scores, _, y_true, deltas = val_run(rand_model, valloader, criterion)
+        scores = torch.cat(scores).cpu()
+        y_true = torch.cat(y_true).cpu()
+        deltas = torch.cat(deltas).cpu()
+
+        threshs = np.linspace(0, 1, 501)
+        objectives = []
+        for thresh in threshs:
+            bias = compute_bias(ypred_test > thresh, y_test, deltas, 'aod')
+            objective = (0.75)*abs(bias) + (1-0.75)*(1-accuracy_score(y_true, scores > thresh))
+            objectives.append(objective)
+        best_rand_thresh = threshs[np.argmax(objectives)]
+        best_obj = np.max(objectives)
+        if best_obj < rand_result[0]:
+            del rand_result[1]
+            rand_result = [best_obj, rand_model.state_dict(), best_rand_thresh]
+
+        if iteration % 10 == 0:
+            print(f"{iteration} / 101 trials have been sampled.")
 
 
 if __name__ == "__main__":
