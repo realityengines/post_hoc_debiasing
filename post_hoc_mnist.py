@@ -34,24 +34,6 @@ def load_mnist(num_workers=2):
     return trainset, valset, testset, trainloader, valloader, testloader
 
 
-def load_celeba(num_workers=2):
-    transform = transforms.ToTensor()
-
-    trainset = torchvision.datasets.CelebA(root='./data', download=True, split='train', transform=transform)
-
-    trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
-                                              shuffle=True, num_workers=num_workers)
-    valloader = torch.utils.data.DataLoader(valset, batch_size=4,
-                                            shuffle=True, num_workers=num_workers)
-
-    testset = torchvision.datasets.CelebA(root='./data', split='test',
-                                          download=True, transform=transform)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=4,
-                                             shuffle=False, num_workers=num_workers)
-    return trainset, valset, testset, trainloader, valloader, testloader
-
-
 class Model(nn.Module):
 
     def __init__(self):
@@ -129,8 +111,8 @@ def compute_bias(y_pred, y_true, priv, metric):
         return gtpr_unpriv - gtpr_priv
 
 
-def train_model(net, trainloader, valloader, criterion, optimizer):
-    for epoch in range(2):  # loop over the dataset multiple times
+def train_model(net, trainloader, valloader, criterion, optimizer, epochs=1):
+    for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
         for i, data in enumerate(trainloader, 0):
             # get the inputs; data is a list of [inputs, labels]
@@ -191,13 +173,13 @@ def main():
 
     fpr, tpr, thresholds = roc_curve(y_test, ypred_test)
     plt.plot(fpr, tpr)
-    print(roc_auc_score(y_test, ypred_test))
+    print('roc_auc', roc_auc_score(y_test, ypred_test))
 
     threshs = np.linspace(0, 1, 1001)
     best_thresh = np.max([accuracy_score(y_test, ypred_test > thresh) for thresh in threshs])
     accuracy_score(y_test, ypred_test > best_thresh)
 
-    print(abs(compute_bias(ypred_test > best_thresh, y_test, deltas, 'aod')))
+    print('bias', abs(compute_bias(ypred_test > best_thresh, y_test, deltas, 'aod')))
 
     rand_result = [math.inf, None, -1]
     rand_model = Model()
@@ -213,10 +195,17 @@ def main():
         y_true = torch.cat(y_true).cpu()
         deltas = torch.cat(deltas).cpu()
 
+        scores = scores.numpy()
+        y_true = y_true.numpy()
+        deltas = deltas.numpy()
+        deltas = np.squeeze(deltas)
+
         threshs = np.linspace(0, 1, 501)
         objectives = []
+
         for thresh in threshs:
-            bias = compute_bias(ypred_test > thresh, y_test, deltas, 'aod')
+
+            bias = compute_bias(scores > thresh, y_true, deltas, 'aod')
             objective = (0.75)*abs(bias) + (1-0.75)*(1-accuracy_score(y_true, scores > thresh))
             objectives.append(objective)
         best_rand_thresh = threshs[np.argmax(objectives)]
