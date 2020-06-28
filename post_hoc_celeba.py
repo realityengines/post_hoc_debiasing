@@ -75,17 +75,15 @@ def val_run(model, valloader, criterion):
     outputs = []
     valloss = 0.
     yval_trues = []
-    valdetas = []
     with torch.no_grad():
         for valdata in valloader:
             valinputs, vallabels = valdata[0].to(device), valdata[1].to(device)
-            yval_true, valdelta = add_bias(vallabels)
-            valdetas.append(valdelta)
-            valoutputs = model(valinputs + valdelta * torch.randn_like(valinputs)*0.4).squeeze(-1)
+            yval_true = get_single_attr(vallabels)
+            valoutputs = model(valinputs).squeeze(-1)
             outputs.append(torch.sigmoid(valoutputs))
             valloss += criterion(valoutputs, yval_true).item()
             yval_trues.append(yval_true)
-    return outputs, valloss, yval_trues, valdetas
+    return outputs, valloss, yval_trues
 
 
 def compute_bias(y_pred, y_true, priv, metric):
@@ -107,6 +105,7 @@ def compute_bias(y_pred, y_true, priv, metric):
     elif metric == "eod":
         return gtpr_unpriv - gtpr_priv
 
+
 def get_single_attr(labels, attr='Attractive'):
     descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', \
                     'Bags_Under_Eyes', 'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', \
@@ -127,20 +126,21 @@ def get_single_attr(labels, attr='Attractive'):
     print(attrs.shape)
     return attrs
 
+
 def train_model(net, trainloader, valloader, criterion, optimizer):
     for epoch in range(2):  # loop over the dataset multiple times
         running_loss = 0.0
         for i, data in enumerate(trainloader, 0):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data[0].to(device), data[1].to(device)
-            labels = get_single_attr(labels)
+            ytrue = get_single_attr(labels)
 
             # zero the parameter gradients
             optimizer.zero_grad()
 
             # forward + backward + optimize
             outputs = net(inputs).squeeze(-1)
-            loss = criterion(outputs, labels)
+            loss = criterion(outputs, ytrue)
             loss.backward()
             optimizer.step()
 
@@ -166,28 +166,29 @@ def main():
 
     y_test = []
     ypred_test = []
-    deltas = []
+    protected = []
 
     with torch.no_grad():
         for data in testloader:
             images, labels = data[0].to(device), data[1].to(device)
-            ytrue, delta = add_bias(labels)
-            outputs = net(images + delta * torch.randn_like(images)*0.4).squeeze(-1)
+            ytrue, delta = get_single_attr(labels)
+            protected_label = get_single_attr(labels, attr='Male')
+            outputs = net(images).squeeze(-1)
             y_test.append(ytrue)
-            deltas.append(delta)
             ypred_test.append(torch.sigmoid(outputs))
+            protected.append(protected_label)
 
     y_test = torch.cat(y_test).cpu().numpy()
     print(y_test)
 
-    deltas = torch.cat(deltas).squeeze().cpu().numpy()
-    print(deltas)
-
     ypred_test = torch.cat(ypred_test).cpu().numpy()
     print(ypred_test)
 
-    print((y_test == deltas).mean().item())
+    protected = torch.cat(protected).cpu().numpy()
+    print(protected)
 
+
+    # todo: compute the bias
     fpr, tpr, thresholds = roc_curve(y_test, ypred_test)
     plt.plot(fpr, tpr)
     print(roc_auc_score(y_test, ypred_test))
