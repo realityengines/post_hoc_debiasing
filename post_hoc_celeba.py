@@ -24,7 +24,7 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', \
                 'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', \
                 'Young']
 
-def load_celeba(num_workers=2, trainsize=10000, seed=0):
+def load_celeba(num_workers=2, trainsize=100, seed=0):
     transform = transforms.ToTensor()
 
     trainset = torchvision.datasets.CelebA(root='./data', 
@@ -206,22 +206,14 @@ def main():
     ypred_test = torch.cat(ypred_test).cpu().numpy()
     protected = torch.cat(protected).cpu().numpy()
 
-    #print(y_test)
-    #print(ypred_test)
-    #print(protected)
-    print('accuracy', (y_test == ypred_test).mean().item())
+    #print('accuracy', (y_test == ypred_test).mean().item())
     print('roc auc', roc_auc_score(y_test, ypred_test))
-
-    # todo: compute the bias
-    fpr, tpr, thresholds = roc_curve(y_test, ypred_test)
-    plt.plot(fpr, tpr)
-    print(roc_auc_score(y_test, ypred_test))
 
     threshs = np.linspace(0, 1, 1001)
     best_thresh = np.max([accuracy_score(y_test, ypred_test > thresh) for thresh in threshs])
-    accuracy_score(y_test, ypred_test > best_thresh)
+    print('accuracy with best thresh', accuracy_score(y_test, ypred_test > best_thresh))
 
-    print(abs(compute_bias(ypred_test > best_thresh, y_test, deltas, 'aod')))
+    #print(abs(compute_bias(ypred_test > best_thresh, y_test, deltas, 'aod')))
 
 
 if __name__ == "__main__":
