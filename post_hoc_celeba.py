@@ -62,7 +62,7 @@ def get_resnet_model():
     return resnet18
 
 
-def best_acc(y_true, y_pred, y_prot):
+def get_best_accuracy(y_true, y_pred, y_prot):
     threshs = torch.linspace(0, 1, 1001)
     best_acc, best_thresh = 0., 0.
     for thresh in threshs:
@@ -102,7 +102,7 @@ def train_model(model, trainloader, valloader, criterion, optimizer, epochs=2):
                 num_examples = index * inputs.size(0)
                 print(f"({index}/{len(trainloader)}) Loss: {running_loss / num_examples:.4f} Acc: {running_corrects.float() / num_examples:.4f}")
 
-        best_acc, _ = val_model(model, valloader, best_acc)
+        best_acc, _ = val_model(model, valloader, get_best_accuracy)
         print(f"Best Accuracy on Validation set: {best_acc}")
 
 
