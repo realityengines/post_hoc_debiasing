@@ -24,27 +24,32 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', \
                 'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', \
                 'Young']
 
-def load_celeba(num_workers=2, trainsize=100, seed=0):
+def load_celeba(num_workers=2, trainsize=100, testsize=100, seed=0):
     transform = transforms.ToTensor()
 
     trainset = torchvision.datasets.CelebA(root='./data', 
                                            download=True, 
                                            split='train', 
                                            transform=transform)
+
+    testset = torchvision.datasets.CelebA(root='./data', 
+                                          split='test',
+                                          download=True, 
+                                          transform=transform)
+
     np.random.seed(seed)
+
     if trainsize >= 0:
         # cut down the training set
         trainset, _ = torch.utils.data.random_split(trainset, [trainsize, len(trainset) - trainsize])
-        #pass
+    if testsize >= 0:
+        testset, _ = torch.utils.data.random_split(testset, [testsize, len(testset) - testsize])
 
     trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
                                               shuffle=True, num_workers=num_workers)
     valloader = torch.utils.data.DataLoader(valset, batch_size=4,
                                             shuffle=True, num_workers=num_workers)
-
-    testset = torchvision.datasets.CelebA(root='./data', split='test',
-                                                download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=4,
                                              shuffle=False, num_workers=num_workers)
     return trainset, valset, testset, trainloader, valloader, testloader
@@ -86,15 +91,18 @@ def val_run(model, valloader, criterion):
     outputs = []
     valloss = 0.
     yval_trues = []
+    protected = []
     with torch.no_grad():
         for valdata in valloader:
             valinputs, vallabels = valdata[0].to(device), valdata[1].to(device)
             yval_true = get_single_attr(vallabels)
+            protected_label = get_single_attr(vallabels, attr='Male')
             valoutputs = model(valinputs).squeeze(-1)
             outputs.append(torch.sigmoid(valoutputs))
             valloss += criterion(valoutputs, yval_true).item()
             yval_trues.append(yval_true)
-    return outputs, valloss, yval_trues
+            protected.append(protected_label)
+    return outputs, valloss, yval_trues, protected
 
 
 def get_single_attr(labels, attr='Attractive'):
@@ -206,14 +214,85 @@ def main():
     ypred_test = torch.cat(ypred_test).cpu().numpy()
     protected = torch.cat(protected).cpu().numpy()
 
-    #print('accuracy', (y_test == ypred_test).mean().item())
-    print('roc auc', roc_auc_score(y_test, ypred_test))
-
-    threshs = np.linspace(0, 1, 1001)
+    threshs = np.linspace(0, 1, 501)
     best_thresh = np.max([accuracy_score(y_test, ypred_test > thresh) for thresh in threshs])
-    print('accuracy with best thresh', accuracy_score(y_test, ypred_test > best_thresh))
+    acc = accuracy_score(y_test, ypred_test > best_thresh)
+    bias = compute_bias(ypred_test > best_thresh, y_test, protected, 'aod')
+    obj = .75*abs(bias)+(1-.75)*(1-acc)
 
-    #print(abs(compute_bias(ypred_test > best_thresh, y_test, deltas, 'aod')))
+    print('roc auc', roc_auc_score(y_test, ypred_test))
+    print('accuracy with best thresh', acc)
+    print('aod', bias)
+    print('objective', obj)
+
+    print('starting random perturbation')
+    rand_result = [math.inf, None, -1]
+    rand_model = Model()
+    for iteration in range(101):
+        rand_model.load_state_dict(net.state_dict())
+        rand_model.to(device)
+        for param in rand_model.parameters():
+            param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
+
+        rand_model.eval()
+        scores, _, yval_trues, protected = val_run(rand_model, valloader, criterion)
+        scores = torch.cat(scores).cpu()
+        scores = scores.numpy()
+        yval_trues = torch.cat(yval_trues).cpu()
+        yval_trues = yval_trues.numpy()
+        protected = torch.cat(protected).cpu()
+        protected = protected.numpy()
+
+        threshs = np.linspace(0, 1, 501)
+        objectives = []
+
+        for thresh in threshs:
+
+            bias = compute_bias(scores > thresh, yval_trues, protected, 'aod')
+            acc = accuracy_score(yval_trues, scores > thresh)
+            objective = (0.75)*abs(bias) + (1-0.75)*(1-acc)
+            objectives.append(objective)
+        best_rand_thresh = threshs[np.argmax(objectives)]
+        best_obj = np.max(objectives)
+        if best_obj < rand_result[0]:
+            del rand_result[1]
+            rand_result = [best_obj, rand_model.state_dict(), best_rand_thresh]
+
+        if iteration % 10 == 0:
+            print(f"{iteration} / 101 trials have been sampled.")
+
+    # evaluate best random model
+    best_model = Model()
+    best_model.load_state_dict(rand_result[1])
+    best_model.to(device)
+    best_thresh = rand_result[2]
+
+    y_test = []
+    ypred_test = []
+    protected = []
+
+    with torch.no_grad():
+        for data in testloader:
+            images, labels = data[0].to(device), data[1].to(device)
+            y_true = get_single_attr(labels)
+            protected_label = get_single_attr(labels, attr='Male')
+            outputs = best_model(images).squeeze(-1)
+            y_test.append(y_true)
+            ypred_test.append(torch.sigmoid(outputs))
+            protected.append(protected_label)
+
+    y_test = torch.cat(y_test).cpu().numpy()
+    ypred_test = torch.cat(ypred_test).cpu().numpy()
+    protected = torch.cat(protected).cpu().numpy()
+
+    acc = accuracy_score(y_test, ypred_test > best_thresh)
+    bias = compute_bias(ypred_test > best_thresh, y_test, protected, 'aod')
+    obj = .75*abs(bias)+(1-.75)*(1-acc)
+
+    print('roc auc', roc_auc_score(y_test, ypred_test))
+    print('accuracy with best thresh', acc)
+    print('aod', bias)
+    print('objective', obj)
 
 
 if __name__ == "__main__":
