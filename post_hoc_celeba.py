@@ -11,80 +11,111 @@ from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from torchvision import models, transforms
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+torch.manual_seed(0)
 
-descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', \
-                'Bags_Under_Eyes', 'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', \
-                'Black_Hair', 'Blond_Hair', 'Blurry', 'Brown_Hair', \
-                'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 'Eyeglasses', \
-                'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', \
-                'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', \
-                'No_Beard', 'Oval_Face', 'Pale_Skin', 'Pointy_Nose', \
-                'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling', \
-                'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat', \
-                'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', \
+descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
+                'Bags_Under_Eyes', 'Bald', 'Bangs', 'Big_Lips', 'Big_Nose',
+                'Black_Hair', 'Blond_Hair', 'Blurry', 'Brown_Hair',
+                'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 'Eyeglasses',
+                'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones',
+                'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes',
+                'No_Beard', 'Oval_Face', 'Pale_Skin', 'Pointy_Nose',
+                'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling',
+                'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat',
+                'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie',
                 'Young']
 
-def load_celeba(num_workers=2, trainsize=100, testsize=100, seed=0):
-    transform = transforms.ToTensor()
+attractive_index = descriptions.index('Attractive')
+male_index = descriptions.index('Male')
 
-    trainset = torchvision.datasets.CelebA(root='./data', 
-                                           download=True, 
-                                           split='train', 
-                                           transform=transform)
 
-    testset = torchvision.datasets.CelebA(root='./data', 
-                                          split='test',
-                                          download=True, 
-                                          transform=transform)
+def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100):
+    transform = transforms.Compose([
+        transforms.RandomResizedCrop(input_size),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
 
-    np.random.seed(seed)
+    trainset = torchvision.datasets.CelebA(root='./data', download=True, split='train', transform=transform)
+    testset = torchvision.datasets.CelebA(root='./data', split='test', download=True, transform=transform)
 
     if trainsize >= 0:
         # cut down the training set
         trainset, _ = torch.utils.data.random_split(trainset, [trainsize, len(trainset) - trainsize])
+        trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
     if testsize >= 0:
         testset, _ = torch.utils.data.random_split(testset, [testsize, len(testset) - testsize])
 
-    trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
-                                              shuffle=True, num_workers=num_workers)
-    valloader = torch.utils.data.DataLoader(valset, batch_size=4,
-                                            shuffle=True, num_workers=num_workers)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=4,
-                                             shuffle=False, num_workers=num_workers)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=4, shuffle=False, num_workers=num_workers)
+    valloader = torch.utils.data.DataLoader(valset, batch_size=4, shuffle=False, num_workers=num_workers)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=4, shuffle=False, num_workers=num_workers)
+
     return trainset, valset, testset, trainloader, valloader, testloader
 
 
-class Model(nn.Module):
+def get_resnet_model():
+    resnet18 = models.resnet18(pretrained=True)
+    num_ftrs = resnet18.fc.in_features
+    resnet18.fc = nn.Linear(num_ftrs, 2)
+    resnet18.to(device)
+    return resnet18
 
-    def __init__(self):
-        super().__init__()
-        # 3 input image channels, 6 output channels, 3x3 square convolution
-        # kernel
-        self.conv1 = nn.Conv2d(3, 6, 3)
-        self.conv2 = nn.Conv2d(6, 16, 3)
-        # an affine operation: y = Wx + b
-        self.fc1 = nn.Linear(36464, 1200)  # 6*6 from image dimension
-        self.fc2 = nn.Linear(1200, 84)
-        self.fc3 = nn.Linear(84, 1)
 
-    def forward(self, x):
-        # Max pooling over a (2, 2) window
-        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
-        # If the size is a square you can only specify a single number
-        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
-        x = x.view(-1, self.num_flat_features(x))
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+def best_acc(y_true, y_pred, y_prot):
+    threshs = torch.linspace(0, 1, 1001)
+    best_acc, best_thresh = 0., 0.
+    for thresh in threshs:
+        acc = torch.mean(y_pred > thresh == y_true)
+        if acc > best_acc:
+            best_acc, best_thresh = acc, thresh
+    return best_acc, best_thresh
 
-    def num_flat_features(self, x):
-        size = x.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
+
+def train_model(model, trainloader, valloader, criterion, optimizer, epochs=2):
+    for epoch in range(epochs):
+        print('Epoch {}/{}'.format(epoch+1, epochs))
+        print('-' * 10)
+
+        model.train()
+
+        running_loss = 0.
+        running_corrects = 0
+
+        for index, (inputs, labels) in enumerate(trainloader):
+            inputs, labels = inputs.to(device), (labels[:, attractive_index]).float().to(device)
+
+            optimizer.zero_grad()
+
+            outputs = model(inputs)
+            loss = criterion(outputs[:, 0], labels)
+
+            preds = torch.sigmoid(outputs[:, 0]) > 0.5
+
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data)
+
+            if (index-1) % 1000 == 0:
+                num_examples = index * inputs.size(0)
+                print(f"({index}/{len(trainloader)}) Loss: {running_loss / num_examples:.4f} Acc: {running_corrects.float() / num_examples:.4f}")
+
+        best_acc, _ = val_model(model, valloader, best_acc)
+        print(f"Best Accuracy on Validation set: {best_acc}")
+
+
+def val_model(model, loader, criterion):
+    y_true, y_pred, y_prot = [], [], []
+    with torch.no_grad():
+        for inputs, labels in loader:
+            inputs, labels, protected = inputs.to(device), labels[:, attractive_index].float().to(device), labels[:, male_index].float().to(device)
+            y_true.append(labels)
+            y_prot.append(protected)
+            y_pred.append(torch.sigmoid(model(inputs)[:, 0]))
+    y_true, y_pred, y_prot = torch.cat(y_true), torch.cat(y_pred), torch.cat(y_prot)
+    return criterion(y_true, y_pred, y_prot)
 
 
 def val_run(model, valloader, criterion):
@@ -107,44 +138,18 @@ def val_run(model, valloader, criterion):
 
 def get_single_attr(labels, attr='Attractive'):
 
-    #print(labels.shape)
+    # print(labels.shape)
     newlabels = []
     for i in range(len(labels)):
         newlabels.append(labels[i][descriptions.index(attr)])
     newlabels = torch.from_numpy(np.array(newlabels))
     newlabels = newlabels.float()
-    #print(newlabels.shape)
+    # print(newlabels.shape)
     return newlabels
 
 
-def train_model(net, trainloader, valloader, criterion, optimizer, epochs=2):
-    for epoch in range(epochs):  # loop over the dataset multiple times
-        running_loss = 0.0
-        for i, data in enumerate(trainloader, 0):
-            # get the inputs; data is a list of [inputs, labels]
-            inputs, labels = data[0].to(device), data[1].to(device)
-            # convert the labels into a single attribute
-            ytrue = get_single_attr(labels)
-
-            # zero the parameter gradients
-            optimizer.zero_grad()
-
-            # forward + backward + optimize
-            outputs = net(inputs).squeeze(-1)
-            loss = criterion(outputs, ytrue)
-            loss.backward()
-            optimizer.step()
-
-            # print statistics
-            running_loss += loss.item()
-            if i % 2000 == 1999:
-                net.eval()
-                _, valloss, _, _ = val_run(net, valloader, criterion)
-                print(f'[{epoch + 1},{i + 1}] trainloss: {running_loss / len(trainloader):.3f}, valloss: {valloss / len(valloader):.3f}')
-                running_loss = 0.0
-
 def compute_priors(data, protected='Male', attr='Attractive'):
-    counts = np.array([[0,0],[0,0]])
+    counts = np.array([[0, 0], [0, 0]])
     for batch in list(data):
         imgs, labels = batch[0], batch[1]
 
@@ -153,9 +158,9 @@ def compute_priors(data, protected='Male', attr='Attractive'):
             attr_value = label[descriptions.index(attr)]
             counts[pro_value][attr_value] += 1
     total = sum(sum(counts))
-    print(protected,':',np.round(sum(counts[1])/total, 4))
-    print(attr,':', np.round(sum(counts[:,1])/total, 4))
-    print(protected, attr, np.round(counts[1][1]/total, 4), 'Female', attr, np.round(counts[0][1]/total, 4))
+    print(protected, ':', np.round(sum(counts[1])/total, 4))
+    print(attr, ':', np.round(sum(counts[:, 1])/total, 4))
+    print(protected, attr, np.round(counts[1][1]/total, 4), f'Not {protected}', attr, np.round(counts[0][1]/total, 4))
 
 
 def compute_bias(y_pred, y_true, priv, metric):
@@ -179,18 +184,9 @@ def compute_bias(y_pred, y_true, priv, metric):
 
 
 def main():
-    trainset, valset, tetstset, trainloader, valloader, testloader = load_celeba()
-    print_priors = False
-    if print_priors:
-        print('train set')
-        compute_priors(trainloader)
-        print('val set')
-        compute_priors(valloader)
-        print('test set')
-        compute_priors(testloader)
+    trainset, valset, testset, trainloader, valloader, testloader = load_celeba()
 
-    net = Model()
-    net.to(device)
+    net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
     train_model(net, trainloader, valloader, criterion, optimizer)
