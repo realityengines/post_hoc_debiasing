@@ -66,7 +66,7 @@ def get_best_accuracy(y_true, y_pred, y_prot):
     threshs = torch.linspace(0, 1, 1001)
     best_acc, best_thresh = 0., 0.
     for thresh in threshs:
-        acc = torch.mean(y_pred > thresh == y_true)
+        acc = torch.mean(((y_pred > thresh) == y_true).float()).item()
         if acc > best_acc:
             best_acc, best_thresh = acc, thresh
     return best_acc, best_thresh
@@ -98,7 +98,7 @@ def train_model(model, trainloader, valloader, criterion, optimizer, epochs=2):
             running_loss += loss.item() * inputs.size(0)
             running_corrects += torch.sum(preds == labels.data)
 
-            if (index-1) % 1000 == 0:
+            if (index-1) % 101 == 0:
                 num_examples = index * inputs.size(0)
                 print(f"({index}/{len(trainloader)}) Loss: {running_loss / num_examples:.4f} Acc: {running_corrects.float() / num_examples:.4f}")
 
