@@ -12,16 +12,30 @@ from torchvision import models, transforms
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', \
+                'Bags_Under_Eyes', 'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', \
+                'Black_Hair', 'Blond_Hair', 'Blurry', 'Brown_Hair', \
+                'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 'Eyeglasses', \
+                'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', \
+                'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', \
+                'No_Beard', 'Oval_Face', 'Pale_Skin', 'Pointy_Nose', \
+                'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling', \
+                'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat', \
+                'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', \
+                'Young']
 
-def load_celeba(num_workers=2, trainsize=10000):
+def load_celeba(num_workers=2, trainsize=10000, seed=0):
     transform = transforms.ToTensor()
 
-    trainset = torchvision.datasets.CelebA(root='./data', download=True, split='train', transform=transform)
-
-    np.random.seed(0)
+    trainset = torchvision.datasets.CelebA(root='./data', 
+                                           download=True, 
+                                           split='train', 
+                                           transform=transform)
+    np.random.seed(seed)
     if trainsize >= 0:
         # cut down the training set
         trainset, _ = torch.utils.data.random_split(trainset, [trainsize, len(trainset) - trainsize])
+        #pass
 
     trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
@@ -45,8 +59,8 @@ class Model(nn.Module):
         self.conv1 = nn.Conv2d(3, 6, 3)
         self.conv2 = nn.Conv2d(6, 16, 3)
         # an affine operation: y = Wx + b
-        self.fc1 = nn.Linear(400, 120)  # 6*6 from image dimension
-        self.fc2 = nn.Linear(120, 84)
+        self.fc1 = nn.Linear(36464, 1200)  # 6*6 from image dimension
+        self.fc2 = nn.Linear(1200, 84)
         self.fc3 = nn.Linear(84, 1)
 
     def forward(self, x):
@@ -83,45 +97,16 @@ def val_run(model, valloader, criterion):
     return outputs, valloss, yval_trues
 
 
-def compute_bias(y_pred, y_true, priv, metric):
-    def zero_if_nan(x):
-        return 0. if np.isnan(x) else x
-
-    gtpr_priv = zero_if_nan(y_pred[priv * y_true == 1].mean())
-    gfpr_priv = zero_if_nan(y_pred[priv * (1-y_true) == 1].mean())
-    mean_priv = zero_if_nan(y_pred[priv == 1].mean())
-
-    gtpr_unpriv = zero_if_nan(y_pred[(1-priv) * y_true == 1].mean())
-    gfpr_unpriv = zero_if_nan(y_pred[(1-priv) * (1-y_true) == 1].mean())
-    mean_unpriv = zero_if_nan(y_pred[(1-priv) == 1].mean())
-
-    if metric == "spd":
-        return mean_unpriv - mean_priv
-    elif metric == "aod":
-        return 0.5 * ((gfpr_unpriv - gfpr_priv) + (gtpr_unpriv - gtpr_priv))
-    elif metric == "eod":
-        return gtpr_unpriv - gtpr_priv
-
-
 def get_single_attr(labels, attr='Attractive'):
-    descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', \
-                    'Bags_Under_Eyes', 'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', \
-                    'Black_Hair', 'Blond_Hair', 'Blurry', 'Brown_Hair', \
-                    'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 'Eyeglasses', \
-                    'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', \
-                    'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', \
-                    'No_Beard', 'Oval_Face', 'Pale_Skin', 'Pointy_Nose', \
-                    'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling', \
-                    'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat', \
-                    'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', \
-                    'Young']
-    print(labels.shape)
-    attrs = []
+
+    #print(labels.shape)
+    newlabels = []
     for i in range(len(labels)):
-        attrs.append(labels[i][descriptions.index(attr)])
-    attrs = torch.from_numpy(np.array(attrs))
-    print(attrs.shape)
-    return attrs
+        newlabels.append(labels[i][descriptions.index(attr)])
+    newlabels = torch.from_numpy(np.array(newlabels))
+    newlabels = newlabels.float()
+    #print(newlabels.shape)
+    return newlabels
 
 
 def train_model(net, trainloader, valloader, criterion, optimizer, epochs=2):
@@ -150,10 +135,51 @@ def train_model(net, trainloader, valloader, criterion, optimizer, epochs=2):
                 print(f'[{epoch + 1},{i + 1}] trainloss: {running_loss / len(trainloader):.3f}, valloss: {valloss / len(valloader):.3f}')
                 running_loss = 0.0
 
+def compute_priors(data, protected='Male', attr='Attractive'):
+    counts = np.array([[0,0],[0,0]])
+    for batch in list(data):
+        imgs, labels = batch[0], batch[1]
+
+        for label in labels:
+            pro_value = label[descriptions.index(protected)]
+            attr_value = label[descriptions.index(attr)]
+            counts[pro_value][attr_value] += 1
+    total = sum(sum(counts))
+    print(protected,':',np.round(sum(counts[1])/total, 4))
+    print(attr,':', np.round(sum(counts[:,1])/total, 4))
+    print(protected, attr, np.round(counts[1][1]/total, 4), 'Female', attr, np.round(counts[0][1]/total, 4))
+
+
+def compute_bias(y_pred, y_true, priv, metric):
+    def zero_if_nan(x):
+        return 0. if np.isnan(x) else x
+
+    gtpr_priv = zero_if_nan(y_pred[priv * y_true == 1].mean())
+    gfpr_priv = zero_if_nan(y_pred[priv * (1-y_true) == 1].mean())
+    mean_priv = zero_if_nan(y_pred[priv == 1].mean())
+
+    gtpr_unpriv = zero_if_nan(y_pred[(1-priv) * y_true == 1].mean())
+    gfpr_unpriv = zero_if_nan(y_pred[(1-priv) * (1-y_true) == 1].mean())
+    mean_unpriv = zero_if_nan(y_pred[(1-priv) == 1].mean())
+
+    if metric == "spd":
+        return mean_unpriv - mean_priv
+    elif metric == "aod":
+        return 0.5 * ((gfpr_unpriv - gfpr_priv) + (gtpr_unpriv - gtpr_priv))
+    elif metric == "eod":
+        return gtpr_unpriv - gtpr_priv
+
 
 def main():
     trainset, valset, tetstset, trainloader, valloader, testloader = load_celeba()
-    print('loaded data')
+    print_priors = False
+    if print_priors:
+        print('train set')
+        compute_priors(trainloader)
+        print('val set')
+        compute_priors(valloader)
+        print('test set')
+        compute_priors(testloader)
 
     net = Model()
     net.to(device)
