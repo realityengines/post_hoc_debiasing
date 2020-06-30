@@ -1,3 +1,4 @@
+import copy
 import math
 import argparse
 
@@ -167,6 +168,7 @@ def compute_priors(data):
     print('Prob. Attractive given Male', protected_rate)
     print('Prob. Attractive given Female', unprotected_rate)
 
+
 def compute_bias(y_pred, y_true, priv, metric):
     def zero_if_nan(x):
         return 0. if np.isnan(x) else x
@@ -200,107 +202,71 @@ def main(args):
 
     if print_priors:
         compute_priors(testloader)
-    
+
     net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
     train_model(net, trainloader, valloader, criterion, optimizer)
 
-    y_test = []
-    ypred_test = []
-    protected = []
+    def get_objective_with_best_accuracy(y_true, y_pred, y_prot):
+        rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
+        best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot)
+        bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
+        obj = .75*abs(bias)+(1-.75)*(1-best_acc)
+        return rocauc_score, best_acc, bias, obj
 
-    # compute test predictions/truth/protected feature
-    with torch.no_grad():
-        for data in testloader:
-            images, labels = data[0].to(device), data[1].to(device)
-            y_true = get_single_attr(labels)
-            protected_label = get_single_attr(labels, attr='Male')
-            outputs = net(images).squeeze(-1)
-            y_test.append(y_true)
-            ypred_test.append(torch.sigmoid(outputs))
-            protected.append(protected_label)
+    rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_with_best_accuracy)
 
-    y_test = torch.cat(y_test).cpu().numpy()
-    ypred_test = torch.cat(ypred_test).cpu().numpy()
-    protected = torch.cat(protected).cpu().numpy()
-
-    threshs = np.linspace(0, 1, 501)
-    best_thresh = np.max([accuracy_score(y_test, ypred_test > thresh) for thresh in threshs])
-    acc = accuracy_score(y_test, ypred_test > best_thresh)
-    bias = compute_bias(ypred_test > best_thresh, y_test, protected, 'aod')
-    obj = .75*abs(bias)+(1-.75)*(1-acc)
-
-    print('roc auc', roc_auc_score(y_test, ypred_test))
-    print('accuracy with best thresh', acc)
+    print('roc auc', rocauc_score)
+    print('accuracy with best thresh', best_acc)
     print('aod', bias)
     print('objective', obj)
 
-    print('starting random perturbation')
+    def get_best_objective(y_true, y_pred, y_prot):
+        threshs = torch.linspace(0, 1, 501)
+        best_obj, best_thresh = math.inf, 0.
+        for thresh in threshs:
+            acc = torch.mean(((y_pred > thresh) == y_true).float()).item()
+            bias = compute_bias((y_pred > thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
+            obj = .75*abs(bias)+(1-.75)*(1-best_acc)
+            if obj < best_obj:
+                best_obj, best_thresh = obj, thresh
+        return best_obj, best_thresh
+
     rand_result = [math.inf, None, -1]
-    rand_model = Model()
+    rand_model = copy.deepcopy(net)
     for iteration in range(101):
-        rand_model.load_state_dict(net.state_dict())
         rand_model.to(device)
         for param in rand_model.parameters():
             param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
 
         rand_model.eval()
-        scores, _, yval_trues, protected = val_run(rand_model, valloader, criterion)
-        scores = torch.cat(scores).cpu()
-        scores = scores.numpy()
-        yval_trues = torch.cat(yval_trues).cpu()
-        yval_trues = yval_trues.numpy()
-        protected = torch.cat(protected).cpu()
-        protected = protected.numpy()
-
-        threshs = np.linspace(0, 1, 501)
-        objectives = []
-
-        for thresh in threshs:
-
-            bias = compute_bias(scores > thresh, yval_trues, protected, 'aod')
-            acc = accuracy_score(yval_trues, scores > thresh)
-            objective = (0.75)*abs(bias) + (1-0.75)*(1-acc)
-            objectives.append(objective)
-        best_rand_thresh = threshs[np.argmax(objectives)]
-        best_obj = np.max(objectives)
+        best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective)
         if best_obj < rand_result[0]:
             del rand_result[1]
-            rand_result = [best_obj, rand_model.state_dict(), best_rand_thresh]
+            rand_result = [best_obj, rand_model.state_dict(), best_thresh]
 
         if iteration % 10 == 0:
             print(f"{iteration} / 101 trials have been sampled.")
 
     # evaluate best random model
-    best_model = Model()
+    best_model = copy.deepcopy(net)
     best_model.load_state_dict(rand_result[1])
     best_model.to(device)
     best_thresh = rand_result[2]
 
-    y_test = []
-    ypred_test = []
-    protected = []
+    def get_best_objective_results(best_thresh):
+        def _get_results(y_true, y_pred, y_prot):
+            rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
+            acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
+            bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
+            obj = .75*abs(bias)+(1-.75)*(1-best_acc)
+            return rocauc_score, acc, bias, obj
+        return _get_results
 
-    with torch.no_grad():
-        for data in testloader:
-            images, labels = data[0].to(device), data[1].to(device)
-            y_true = get_single_attr(labels)
-            protected_label = get_single_attr(labels, attr='Male')
-            outputs = best_model(images).squeeze(-1)
-            y_test.append(y_true)
-            ypred_test.append(torch.sigmoid(outputs))
-            protected.append(protected_label)
+    rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_best_objective_results(best_thresh))
 
-    y_test = torch.cat(y_test).cpu().numpy()
-    ypred_test = torch.cat(ypred_test).cpu().numpy()
-    protected = torch.cat(protected).cpu().numpy()
-
-    acc = accuracy_score(y_test, ypred_test > best_thresh)
-    bias = compute_bias(ypred_test > best_thresh, y_test, protected, 'aod')
-    obj = .75*abs(bias)+(1-.75)*(1-acc)
-
-    print('roc auc', roc_auc_score(y_test, ypred_test))
+    print('roc auc', rocauc_score)
     print('accuracy with best thresh', acc)
     print('aod', bias)
     print('objective', obj)
