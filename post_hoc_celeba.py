@@ -1,4 +1,5 @@
 import math
+import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -43,7 +44,7 @@ def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100):
     if trainsize >= 0:
         # cut down the training set
         trainset, _ = torch.utils.data.random_split(trainset, [trainsize, len(trainset) - trainsize])
-        trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
+    trainset, valset = torch.utils.data.random_split(trainset, [int(len(trainset)*0.7), int(len(trainset)*0.3)])
     if testsize >= 0:
         testset, _ = torch.utils.data.random_split(testset, [testsize, len(testset) - testsize])
 
@@ -148,20 +149,23 @@ def get_single_attr(labels, attr='Attractive'):
     return newlabels
 
 
-def compute_priors(data, protected='Male', attr='Attractive'):
+def compute_priors(data):
     counts = np.array([[0, 0], [0, 0]])
     for batch in list(data):
         imgs, labels = batch[0], batch[1]
 
         for label in labels:
-            pro_value = label[descriptions.index(protected)]
-            attr_value = label[descriptions.index(attr)]
+            pro_value = label[male_index]
+            attr_value = label[attractive_index]
             counts[pro_value][attr_value] += 1
     total = sum(sum(counts))
-    print(protected, ':', np.round(sum(counts[1])/total, 4))
-    print(attr, ':', np.round(sum(counts[:, 1])/total, 4))
-    print(protected, attr, np.round(counts[1][1]/total, 4), f'Not {protected}', attr, np.round(counts[0][1]/total, 4))
+    protected_rate = np.round(counts[1][1]/sum(counts[1]), 4)
+    unprotected_rate = np.round(counts[0][1]/sum(counts[0]), 4)
 
+    print('Prob. Male:', np.round(sum(counts[1])/total, 4))
+    print('Prob. Attractive:', np.round(sum(counts[:, 1])/total, 4))
+    print('Prob. Attractive given Male', protected_rate)
+    print('Prob. Attractive given Female', unprotected_rate)
 
 def compute_bias(y_pred, y_true, priv, metric):
     def zero_if_nan(x):
@@ -183,9 +187,20 @@ def compute_bias(y_pred, y_true, priv, metric):
         return gtpr_unpriv - gtpr_priv
 
 
-def main():
-    trainset, valset, testset, trainloader, valloader, testloader = load_celeba()
+def main(args):
 
+    trainsize = args.trainsize
+    testsize = args.testsize
+    num_workers = args.num_workers
+    print_priors = args.print_priors
+
+    trainset, valset, testset, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
+                                                                                testsize=testsize,
+                                                                                num_workers=num_workers)
+
+    if print_priors:
+        compute_priors(testloader)
+    
     net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
@@ -292,4 +307,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Args for CelebA experiments')
+    parser.add_argument('--trainsize', type=int, default=100, help='Size of training set')
+    parser.add_argument('--testsize', type=int, default=100, help='Size of test set')
+    parser.add_argument('--num_workers', type=int, default=2, help='Number of worker threads')
+    parser.add_argument('--print_priors', type=bool, default=True, help='Compute the prior percents')
+
+    args = parser.parse_args()
+    main(args)
