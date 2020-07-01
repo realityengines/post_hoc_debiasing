@@ -7,16 +7,16 @@ from torchvision.datasets import CelebA
 from torch.utils.data import Subset
 
 thresh = .7
-white = np.load(os.path.expanduser('~/post_hoc_debiasing/white_full.npy'))
-black = np.load(os.path.expanduser('~/post_hoc_debiasing/black_full.npy'))       
-asian = np.load(os.path.expanduser('~/post_hoc_debiasing/asian_full.npy'))
+white = np.load(os.path.expanduser('~/post_hoc_debiasing/celebrace/white_full.npy'))
+black = np.load(os.path.expanduser('~/post_hoc_debiasing/celebrace/black_full.npy'))
+asian = np.load(os.path.expanduser('~/post_hoc_debiasing/celebrace/asian_full.npy'))
 
 
 class CelebRace(CelebA):
 
-#    def __init__(self, transform, split, root='./data', download=True):
-#        super().__init__(transform=transform, split=split, root=root, download=download)
-        
+    #    def __init__(self, transform, split, root='./data', download=True):
+    #        super().__init__(transform=transform, split=split, root=root, download=download)
+
     def __getitem__(self, index):
 
         X, target = super().__getitem__(index)
@@ -48,4 +48,3 @@ def split_check(dataset, split='train'):
     unambiguous_indices = [i for i in range(n) if (asian[i] > thresh)]
 
     return Subset(dataset, unambiguous_indices)
-
