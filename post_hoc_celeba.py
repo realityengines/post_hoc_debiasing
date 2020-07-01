@@ -3,18 +3,16 @@ import copy
 import math
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torchvision
 import yaml
-from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score
 from torchvision import models, transforms
 
-from celeb_race import *
+from celeb_race import CelebRace, unambiguous_bw
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
@@ -69,7 +67,7 @@ def get_resnet_model():
     return resnet18
 
 
-def get_best_accuracy(y_true, y_pred, y_prot):
+def get_best_accuracy(y_true, y_pred, _):
     threshs = torch.linspace(0, 1, 1001)
     best_acc, best_thresh = 0., 0.
     for thresh in threshs:
@@ -133,7 +131,7 @@ def val_model(model, loader, criterion, protected_index, prediction_index):
 def compute_priors(data, protected_index, prediction_index):
     counts = np.zeros((2, 2))
     for batch in list(data):
-        imgs, labels = batch[0], batch[1]
+        _, labels = batch[0], batch[1]
 
         for label in labels:
             prot_value = label[protected_index]
@@ -314,8 +312,8 @@ def main(config):
                 param.requires_grad = False
             actor.eval()
             critic.train()
-            for index, (inputs, labels) in enumerate(valloader):
-                if index >= 300:
+            for step, (inputs, labels) in enumerate(valloader):
+                if step >= 300:
                     break
                 inputs, labels = inputs.to(device), labels.to(device)
                 critic_optimizer.zero_grad()
@@ -323,9 +321,9 @@ def main(config):
                 with torch.no_grad():
                     scores = actor(inputs)
 
-                bias = compute_bias(scores, cy_valid.numpy(), cp_valid, config['metric'])
-                res = critic(actor.trunc_forward(cX_valid))
-                loss = critic_loss_fn(torch.tensor([bias]), res[0])
+                bias = compute_bias(scores, labels, labels, 'aod')
+                res = critic(actor(inputs))
+                loss = critic_loss_fn(torch.as_tensor([bias]), res[0])
                 loss.backward()
                 train_loss = loss.item()
                 critic_optimizer.step()
@@ -338,13 +336,16 @@ def main(config):
                 param.requires_grad = True
             actor.train()
             critic.eval()
-            for step in range(100):
+            for step, (inputs, labels) in enumerate(valloader):
+                if step >= 100:
+                    break
+                inputs, labels = inputs.to(device), labels.to(device)
                 actor_optimizer.zero_grad()
 
-                lam = config['adversarial']['lambda']
+                lam = 0.75
 
-                bias = critic(actor.trunc_forward(cX_valid))
-                loss = actor_loss_fn(actor(cX_valid)[:, 0], cy_valid)
+                bias = critic(actor(inputs))
+                loss = actor_loss_fn(actor(inputs)[:, 0], labels)
                 loss = lam*abs(bias) + (1-lam)*loss
 
                 loss.backward()
