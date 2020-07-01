@@ -77,7 +77,7 @@ def get_best_accuracy(y_true, y_pred, y_prot):
     return best_acc, best_thresh
 
 
-def train_model(model, trainloader, valloader, criterion, optimizer, protected_index, prediction_index, epochs=2):
+def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=2):
     for epoch in range(epochs):
         print('Epoch {}/{}'.format(epoch+1, epochs))
         print('-' * 10)
@@ -106,6 +106,11 @@ def train_model(model, trainloader, valloader, criterion, optimizer, protected_i
             if (index-1) % 101 == 0:
                 num_examples = index * inputs.size(0)
                 print(f"({index}/{len(trainloader)}) Loss: {running_loss / num_examples:.4f} Acc: {running_corrects.float() / num_examples:.4f}")
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, checkpoint)
 
         best_acc, _ = val_model(model, valloader, get_best_accuracy, protected_index, prediction_index)
         print(f"Best Accuracy on Validation set: {best_acc}")
@@ -183,7 +188,7 @@ def get_best_objective(y_true, y_pred, y_prot):
     return best_obj, best_thresh
 
 
-def get_best_objective_results(best_thresh):
+def get_objective_results(best_thresh):
     def _get_results(y_true, y_pred, y_prot):
         rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
         acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
@@ -221,32 +226,27 @@ def main(args):
     protected_attr = args.protected_attr
     prediction_attr = args.prediction_attr
     batch_size = args.batch_size
+    checkpoint = args.checkpoint
 
     protected_index = descriptions.index(protected_attr)
     prediction_index = descriptions.index(prediction_attr)
 
-
-<< << << < HEAD
-   _, _, _, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
-                                                              testsize=testsize,
-                                                              num_workers=num_workers)
-== == == =
-   trainset, valset, testset, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
-                                                                                testsize=testsize,
-                                                                                num_workers=num_workers,
-                                                                                batch_size=batch_size)
->>>>>> > 95083b2d6be58ed19c8cd5dfc54bf7477f3ecc15
-
-   if print_priors:
+    _, _, _, trainloader, valloader, testloader = load_celeba(
+        trainsize=trainsize,
+        testsize=testsize,
+        num_workers=num_workers,
+        batch_size=batch_size
+    )
+    if print_priors:
         compute_priors(testloader, protected_index, prediction_index)
 
     net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
-    train_model(net, trainloader, valloader, criterion, optimizer, protected_index, prediction_index, epochs=epochs)
+    train_model(net, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=epochs)
 
-    _, best_thresh = val_model(rand_model, valloader, get_best_accuracy, protected_index, prediction_index)
-    rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_best_objective_results(best_thresh), protected_index, prediction_index)
+    _, best_thresh = val_model(net, valloader, get_best_accuracy, protected_index, prediction_index)
+    rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', best_acc)
@@ -275,7 +275,7 @@ def main(args):
     best_model.to(device)
     best_thresh = rand_result[2]
 
-    rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_best_objective_results(best_thresh), protected_index, prediction_index)
+    rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', acc)
@@ -352,6 +352,7 @@ if __name__ == "__main__":
     parser.add_argument('--print_priors', type=bool, default=True, help='Compute the prior percents')
     parser.add_argument('--protected_attr', type=str, default='Black', help='Protected class')
     parser.add_argument('--prediction_attr', type=str, default='Attractive', help='What to predict')
+    parser.add_argument('--checkpoint', type=str, default='checkpoint.pt', help='Where to save checkpoints')
 
     args = parser.parse_args()
     main(args)
