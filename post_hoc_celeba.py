@@ -219,8 +219,8 @@ def main(args):
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', best_acc)
-    print('aod', bias)
-    print('objective', obj)
+    print('aod', bias.item())
+    print('objective', obj.item())
 
     def get_best_objective(y_true, y_pred, y_prot):
         threshs = torch.linspace(0, 1, 501)
@@ -268,14 +268,14 @@ def main(args):
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', acc)
-    print('aod', bias)
-    print('objective', obj)
+    print('aod', bias.item())
+    print('objective', obj.item())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Args for CelebA experiments')
-    parser.add_argument('--trainsize', type=int, default=100, help='Size of training set')
-    parser.add_argument('--testsize', type=int, default=100, help='Size of test set')
+    parser.add_argument('--trainsize', type=int, default=5000, help='Size of training set')
+    parser.add_argument('--testsize', type=int, default=1000, help='Size of test set')
     parser.add_argument('--num_workers', type=int, default=2, help='Number of worker threads')
     parser.add_argument('--print_priors', type=bool, default=True, help='Compute the prior percents')
 
