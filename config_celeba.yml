@@ -1,0 +1,12 @@
+---
+    epochs: 2
+    trainsize: 5000
+    testsize: 1000
+    batch_size: 4
+    num_workers: 2
+    print_priors: True
+    protected_attr: 'Black'
+    prediction_attr: 'Attractive'
+    checkpoint: 'checkpoint.pt'
+    models:
+        - random

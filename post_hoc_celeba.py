@@ -1,6 +1,7 @@
+import argparse
 import copy
 import math
-import argparse
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
+import yaml
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from torchvision import models, transforms
 
@@ -77,8 +79,8 @@ def get_best_accuracy(y_true, y_pred, y_prot):
     return best_acc, best_thresh
 
 
-def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=2):
-    for epoch in range(epochs):
+def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=2, start_epoch=0):
+    for epoch in range(start_epoch, epochs):
         print('Epoch {}/{}'.format(epoch+1, epochs))
         print('-' * 10)
 
@@ -216,34 +218,42 @@ class Critic(nn.Module):
         return self.out(t)
 
 
-def main(args):
+def main(config):
 
-    trainsize = args.trainsize
-    testsize = args.testsize
-    num_workers = args.num_workers
-    print_priors = args.print_priors
-    epochs = args.epochs
-    protected_attr = args.protected_attr
-    prediction_attr = args.prediction_attr
-    batch_size = args.batch_size
-    checkpoint = args.checkpoint
-
-    protected_index = descriptions.index(protected_attr)
-    prediction_index = descriptions.index(prediction_attr)
+    protected_index = descriptions.index(config['protected_attr'])
+    prediction_index = descriptions.index(config['prediction_attr'])
 
     _, _, _, trainloader, valloader, testloader = load_celeba(
-        trainsize=trainsize,
-        testsize=testsize,
-        num_workers=num_workers,
-        batch_size=batch_size
+        trainsize=config['trainsize'],
+        testsize=config['testsize'],
+        num_workers=config['num_workers'],
+        batch_size=config['batch_size']
     )
-    if print_priors:
+    if config['print_priors']:
         compute_priors(testloader, protected_index, prediction_index)
 
     net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
-    train_model(net, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=epochs)
+    checkpoint_file = Path(config['checkpoint'])
+    start_epoch = 0
+    if checkpoint_file.is_file():
+        checkpoint = torch.load(checkpoint_file)
+        net.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch']
+    train_model(
+        net,
+        trainloader,
+        valloader,
+        criterion,
+        optimizer,
+        config['checkpoint'],
+        protected_index,
+        prediction_index,
+        epochs=config['epochs'],
+        start_epoch=start_epoch
+    )
 
     _, best_thresh = val_model(net, valloader, get_best_accuracy, protected_index, prediction_index)
     rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
@@ -253,106 +263,103 @@ def main(args):
     print('aod', bias.item())
     print('objective', obj.item())
 
-    rand_result = [math.inf, None, -1]
-    rand_model = copy.deepcopy(net)
-    for iteration in range(101):
-        rand_model.to(device)
-        for param in rand_model.parameters():
-            param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
+    if 'random' in config['models']:
+        rand_result = [math.inf, None, -1]
+        rand_model = copy.deepcopy(net)
+        for iteration in range(101):
+            rand_model.to(device)
+            for param in rand_model.parameters():
+                param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
 
-        rand_model.eval()
-        best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective, protected_index, prediction_index)
-        if best_obj < rand_result[0]:
-            del rand_result[1]
-            rand_result = [best_obj, rand_model.state_dict(), best_thresh]
+            rand_model.eval()
+            best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective, protected_index, prediction_index)
+            if best_obj < rand_result[0]:
+                del rand_result[1]
+                rand_result = [best_obj, rand_model.state_dict(), best_thresh]
 
-        if iteration % 10 == 0:
-            print(f"{iteration} / 101 trials have been sampled.")
+            if iteration % 10 == 0:
+                print(f"{iteration} / 101 trials have been sampled.")
 
-    # evaluate best random model
-    best_model = copy.deepcopy(net)
-    best_model.load_state_dict(rand_result[1])
-    best_model.to(device)
-    best_thresh = rand_result[2]
+        # evaluate best random model
+        best_model = copy.deepcopy(net)
+        best_model.load_state_dict(rand_result[1])
+        best_model.to(device)
+        best_thresh = rand_result[2]
 
-    rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
+        rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', acc)
     print('aod', bias.item())
     print('objective', obj.item())
 
-    # base_model = copy.deepcopy(net)
-    # base_model.fc = nn.Linear(base_model.fc.in_features, base_model.fc.in_features)
+    if 'adversarial' in config['models']:
+        base_model = copy.deepcopy(net)
+        base_model.fc = nn.Linear(base_model.fc.in_features, base_model.fc.in_features)
 
-    # actor = nn.Sequential(base_model, nn.Linear(base_model.fc.in_features, 2))
-    # actor.to(device)
-    # actor_optimizer = optim.Adam(actor.parameters())
-    # actor_loss_fn = nn.BCEWithLogitsLoss()
+        actor = nn.Sequential(base_model, nn.Linear(base_model.fc.in_features, 2))
+        actor.to(device)
+        actor_optimizer = optim.Adam(actor.parameters())
+        actor_loss_fn = nn.BCEWithLogitsLoss()
 
-    # critic = Critic(net.fc.in_features)
-    # critic.to(device)
-    # critic_optimizer = optim.Adam(critic.parameters())
-    # critic_loss_fn = nn.MSELoss()
+        critic = Critic(net.fc.in_features)
+        critic.to(device)
+        critic_optimizer = optim.Adam(critic.parameters())
+        critic_loss_fn = nn.MSELoss()
 
-    # for epoch in range(100):
-    #     for param in critic.parameters():
-    #         param.requires_grad = True
-    #     for param in actor.parameters():
-    #         param.requires_grad = False
-    #     actor.eval()
-    #     critic.train()
-    #     for index, (inputs, labels) in enumerate(valloader):
-    #         if index >= 300:
-    #             break
-    #         inputs, labels = inputs.to(device), labels.to(device)
-    #         critic_optimizer.zero_grad()
+        for epoch in range(100):
+            for param in critic.parameters():
+                param.requires_grad = True
+            for param in actor.parameters():
+                param.requires_grad = False
+            actor.eval()
+            critic.train()
+            for index, (inputs, labels) in enumerate(valloader):
+                if index >= 300:
+                    break
+                inputs, labels = inputs.to(device), labels.to(device)
+                critic_optimizer.zero_grad()
 
-    #         with torch.no_grad():
-    #             scores = actor(inputs)
+                with torch.no_grad():
+                    scores = actor(inputs)
 
-    #         bias = compute_bias(scores, cy_valid.numpy(), cp_valid, config['metric'])
-    #         res = critic(actor.trunc_forward(cX_valid))
-    #         loss = critic_loss_fn(torch.tensor([bias]), res[0])
-    #         loss.backward()
-    #         train_loss = loss.item()
-    #         critic_optimizer.step()
-    #         if step % 100 == 0:
-    #             print(f'=======> Epoch: {(epoch, step)} Critic loss: {train_loss}')
+                bias = compute_bias(scores, cy_valid.numpy(), cp_valid, config['metric'])
+                res = critic(actor.trunc_forward(cX_valid))
+                loss = critic_loss_fn(torch.tensor([bias]), res[0])
+                loss.backward()
+                train_loss = loss.item()
+                critic_optimizer.step()
+                if step % 100 == 0:
+                    print(f'=======> Epoch: {(epoch, step)} Critic loss: {train_loss}')
 
-    #     for param in critic.parameters():
-    #         param.requires_grad = False
-    #     for param in actor.parameters():
-    #         param.requires_grad = True
-    #     actor.train()
-    #     critic.eval()
-    #     for step in range(100):
-    #         actor_optimizer.zero_grad()
+            for param in critic.parameters():
+                param.requires_grad = False
+            for param in actor.parameters():
+                param.requires_grad = True
+            actor.train()
+            critic.eval()
+            for step in range(100):
+                actor_optimizer.zero_grad()
 
-    #         lam = config['adversarial']['lambda']
+                lam = config['adversarial']['lambda']
 
-    #         bias = critic(actor.trunc_forward(cX_valid))
-    #         loss = actor_loss_fn(actor(cX_valid)[:, 0], cy_valid)
-    #         loss = lam*abs(bias) + (1-lam)*loss
+                bias = critic(actor.trunc_forward(cX_valid))
+                loss = actor_loss_fn(actor(cX_valid)[:, 0], cy_valid)
+                loss = lam*abs(bias) + (1-lam)*loss
 
-    #         loss.backward()
-    #         train_loss = loss.item()
-    #         actor_optimizer.step()
-    #         if step % 100 == 0:
-    #             print(f'=======> Epoch: {(epoch, step)} Actor loss: {train_loss}')
+                loss.backward()
+                train_loss = loss.item()
+                actor_optimizer.step()
+                if step % 100 == 0:
+                    print(f'=======> Epoch: {(epoch, step)} Actor loss: {train_loss}')
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Args for CelebA experiments')
-    parser.add_argument('--epochs', type=int, default=2, help='Number of epochs')
-    parser.add_argument('--trainsize', type=int, default=5000, help='Size of training set')
-    parser.add_argument('--testsize', type=int, default=1000, help='Size of test set')
-    parser.add_argument('--batch_size', type=int, default=4, help='batch size')
-    parser.add_argument('--num_workers', type=int, default=2, help='Number of worker threads')
-    parser.add_argument('--print_priors', type=bool, default=True, help='Compute the prior percents')
-    parser.add_argument('--protected_attr', type=str, default='Black', help='Protected class')
-    parser.add_argument('--prediction_attr', type=str, default='Attractive', help='What to predict')
-    parser.add_argument('--checkpoint', type=str, default='checkpoint.pt', help='Where to save checkpoints')
+    parser.add_argument("config", help="Path to configuration yaml file.")
+    args = parser.parse_args()
+    with open(args.config, 'r') as fh:
+        config = yaml.load(fh, Loader=yaml.FullLoader)
 
     args = parser.parse_args()
-    main(args)
+    main(config)
