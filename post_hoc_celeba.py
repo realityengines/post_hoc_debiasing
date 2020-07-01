@@ -12,6 +12,8 @@ import torchvision
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from torchvision import models, transforms
 
+from celeb_race import *
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
 
@@ -25,11 +27,7 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
                 'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling',
                 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat',
                 'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie',
-                'Young']
-
-attractive_index = descriptions.index('Attractive')
-male_index = descriptions.index('Male')
-
+                'Young', 'White', 'Black', 'Asian']
 
 def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100):
     transform = transforms.Compose([
@@ -39,8 +37,12 @@ def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100):
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-    trainset = torchvision.datasets.CelebA(root='./data', download=True, split='train', transform=transform)
-    testset = torchvision.datasets.CelebA(root='./data', split='test', download=True, transform=transform)
+    trainset = CelebRace(root='./data', download=True, split='train', transform=transform)
+    testset = CelebRace(root='./data', download=True, split='test', transform=transform)
+
+    # return only the images which were predicted white or black by >70%.
+    trainset = unambiguous_bw(trainset, split='train')
+    testset = unambiguous_bw(testset, split='test')
 
     if trainsize >= 0:
         # cut down the training set
@@ -74,7 +76,7 @@ def get_best_accuracy(y_true, y_pred, y_prot):
     return best_acc, best_thresh
 
 
-def train_model(model, trainloader, valloader, criterion, optimizer, epochs=2):
+def train_model(model, trainloader, valloader, criterion, optimizer, protected_index, prediction_index, epochs=2):
     for epoch in range(epochs):
         print('Epoch {}/{}'.format(epoch+1, epochs))
         print('-' * 10)
@@ -85,7 +87,7 @@ def train_model(model, trainloader, valloader, criterion, optimizer, epochs=2):
         running_corrects = 0
 
         for index, (inputs, labels) in enumerate(trainloader):
-            inputs, labels = inputs.to(device), (labels[:, attractive_index]).float().to(device)
+            inputs, labels = inputs.to(device), (labels[:, prediction_index]).float().to(device)
 
             optimizer.zero_grad()
 
@@ -104,15 +106,15 @@ def train_model(model, trainloader, valloader, criterion, optimizer, epochs=2):
                 num_examples = index * inputs.size(0)
                 print(f"({index}/{len(trainloader)}) Loss: {running_loss / num_examples:.4f} Acc: {running_corrects.float() / num_examples:.4f}")
 
-        best_acc, _ = val_model(model, valloader, get_best_accuracy)
+        best_acc, _ = val_model(model, valloader, get_best_accuracy, protected_index, prediction_index)
         print(f"Best Accuracy on Validation set: {best_acc}")
 
 
-def val_model(model, loader, criterion):
+def val_model(model, loader, criterion, protected_index, prediction_index):
     y_true, y_pred, y_prot = [], [], []
     with torch.no_grad():
         for inputs, labels in loader:
-            inputs, labels, protected = inputs.to(device), labels[:, attractive_index].float().to(device), labels[:, male_index].float().to(device)
+            inputs, labels, protected = inputs.to(device), labels[:, prediction_index].float().to(device), labels[:, protected_index].float().to(device)
             y_true.append(labels)
             y_prot.append(protected)
             y_pred.append(torch.sigmoid(model(inputs)[:, 0]))
@@ -120,53 +122,24 @@ def val_model(model, loader, criterion):
     return criterion(y_true, y_pred, y_prot)
 
 
-def val_run(model, valloader, criterion):
-    outputs = []
-    valloss = 0.
-    yval_trues = []
-    protected = []
-    with torch.no_grad():
-        for valdata in valloader:
-            valinputs, vallabels = valdata[0].to(device), valdata[1].to(device)
-            yval_true = get_single_attr(vallabels)
-            protected_label = get_single_attr(vallabels, attr='Male')
-            valoutputs = model(valinputs).squeeze(-1)
-            outputs.append(torch.sigmoid(valoutputs))
-            valloss += criterion(valoutputs, yval_true).item()
-            yval_trues.append(yval_true)
-            protected.append(protected_label)
-    return outputs, valloss, yval_trues, protected
-
-
-def get_single_attr(labels, attr='Attractive'):
-
-    # print(labels.shape)
-    newlabels = []
-    for i in range(len(labels)):
-        newlabels.append(labels[i][descriptions.index(attr)])
-    newlabels = torch.from_numpy(np.array(newlabels))
-    newlabels = newlabels.float()
-    # print(newlabels.shape)
-    return newlabels
-
-
-def compute_priors(data):
-    counts = np.array([[0, 0], [0, 0]])
+def compute_priors(data, protected_index, prediction_index):
+    counts = np.zeros((2,2))
     for batch in list(data):
         imgs, labels = batch[0], batch[1]
 
         for label in labels:
-            pro_value = label[male_index]
-            attr_value = label[attractive_index]
-            counts[pro_value][attr_value] += 1
+            prot_value = label[protected_index]
+            pred_value = label[prediction_index]
+            counts[prot_value][pred_value] += 1
     total = sum(sum(counts))
-    protected_rate = np.round(counts[1][1]/sum(counts[1]), 4)
-    unprotected_rate = np.round(counts[0][1]/sum(counts[0]), 4)
 
-    print('Prob. Male:', np.round(sum(counts[1])/total, 4))
-    print('Prob. Attractive:', np.round(sum(counts[:, 1])/total, 4))
-    print('Prob. Attractive given Male', protected_rate)
-    print('Prob. Attractive given Female', unprotected_rate)
+    prot_rate = np.round(counts[1][1]/sum(counts[1]), 4)
+    unprot_rate = np.round(counts[0][1]/sum(counts[0]), 4)
+
+    print('Prob. protected class:', np.round(sum(counts[1])/total, 4))
+    print('Prob. positive outcome:', np.round(sum(counts[:, 1])/total, 4))
+    print('Prob. positive outcome given protected class', prot_rate)
+    print('Prob. positive outcome given unprotected class', unprot_rate)
 
 
 def compute_bias(y_pred, y_true, priv, metric):
@@ -189,49 +162,68 @@ def compute_bias(y_pred, y_true, priv, metric):
         return gtpr_unpriv - gtpr_priv
 
 
+def get_objective_with_best_accuracy(y_true, y_pred, y_prot):
+    rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
+    best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot)
+    bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
+    obj = .75*abs(bias)+(1-.75)*(1-best_acc)
+    return rocauc_score, best_acc, bias, obj
+
+
+def get_best_objective(y_true, y_pred, y_prot):
+    threshs = torch.linspace(0, 1, 501)
+    best_obj, best_thresh = math.inf, 0.
+    for thresh in threshs:
+        acc = torch.mean(((y_pred > thresh) == y_true).float()).item()
+        bias = compute_bias((y_pred > thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
+        obj = .75*abs(bias)+(1-.75)*(1-acc)
+        if obj < best_obj:
+            best_obj, best_thresh = obj, thresh
+    return best_obj, best_thresh
+
+
+def get_best_objective_results(best_thresh):
+    def _get_results(y_true, y_pred, y_prot):
+        rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
+        acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
+        bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
+        obj = .75*abs(bias)+(1-.75)*(1-acc)
+        return rocauc_score, acc, bias, obj
+    return _get_results
+
+
 def main(args):
 
     trainsize = args.trainsize
     testsize = args.testsize
     num_workers = args.num_workers
     print_priors = args.print_priors
+    epochs = args.epochs
+    protected_attr = args.protected_attr
+    prediction_attr = args.prediction_attr
+
+    protected_index = descriptions.index(protected_attr)
+    prediction_index = descriptions.index(prediction_attr)
 
     trainset, valset, testset, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
                                                                                 testsize=testsize,
                                                                                 num_workers=num_workers)
 
     if print_priors:
-        compute_priors(testloader)
+        compute_priors(testloader, protected_index, prediction_index)
 
     net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
-    train_model(net, trainloader, valloader, criterion, optimizer)
+    train_model(net, trainloader, valloader, criterion, optimizer, protected_index, prediction_index, epochs=epochs)
 
-    def get_objective_with_best_accuracy(y_true, y_pred, y_prot):
-        rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
-        best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot)
-        bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
-        obj = .75*abs(bias)+(1-.75)*(1-best_acc)
-        return rocauc_score, best_acc, bias, obj
-
-    rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_with_best_accuracy)
+    rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_with_best_accuracy, protected_index, prediction_index)
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', best_acc)
     print('aod', bias)
     print('objective', obj)
 
-    def get_best_objective(y_true, y_pred, y_prot):
-        threshs = torch.linspace(0, 1, 501)
-        best_obj, best_thresh = math.inf, 0.
-        for thresh in threshs:
-            acc = torch.mean(((y_pred > thresh) == y_true).float()).item()
-            bias = compute_bias((y_pred > thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
-            obj = .75*abs(bias)+(1-.75)*(1-best_acc)
-            if obj < best_obj:
-                best_obj, best_thresh = obj, thresh
-        return best_obj, best_thresh
 
     rand_result = [math.inf, None, -1]
     rand_model = copy.deepcopy(net)
@@ -241,7 +233,7 @@ def main(args):
             param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
 
         rand_model.eval()
-        best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective)
+        best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective, protected_index, prediction_index)
         if best_obj < rand_result[0]:
             del rand_result[1]
             rand_result = [best_obj, rand_model.state_dict(), best_thresh]
@@ -255,16 +247,7 @@ def main(args):
     best_model.to(device)
     best_thresh = rand_result[2]
 
-    def get_best_objective_results(best_thresh):
-        def _get_results(y_true, y_pred, y_prot):
-            rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
-            acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
-            bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
-            obj = .75*abs(bias)+(1-.75)*(1-best_acc)
-            return rocauc_score, acc, bias, obj
-        return _get_results
-
-    rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_best_objective_results(best_thresh))
+    rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_best_objective_results(best_thresh), protected_index, prediction_index)
 
     print('roc auc', rocauc_score)
     print('accuracy with best thresh', acc)
@@ -274,10 +257,15 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Args for CelebA experiments')
+    parser.add_argument('--epochs', type=int, default=2, help='Number of epochs')
     parser.add_argument('--trainsize', type=int, default=100, help='Size of training set')
     parser.add_argument('--testsize', type=int, default=100, help='Size of test set')
     parser.add_argument('--num_workers', type=int, default=2, help='Number of worker threads')
     parser.add_argument('--print_priors', type=bool, default=True, help='Compute the prior percents')
+    parser.add_argument('--protected_attr', type=str, default='Black', help='Protected class')
+    parser.add_argument('--prediction_attr', type=str, default='Attractive', help='What to predict')
+
+
 
     args = parser.parse_args()
     main(args)
