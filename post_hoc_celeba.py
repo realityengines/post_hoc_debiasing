@@ -30,7 +30,7 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
                 'Young', 'White', 'Black', 'Asian']
 
 
-def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100):
+def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batch_size=4):
     transform = transforms.Compose([
         transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
@@ -52,9 +52,9 @@ def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100):
     if testsize >= 0:
         testset, _ = torch.utils.data.random_split(testset, [testsize, len(testset) - testsize])
 
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=4, shuffle=False, num_workers=num_workers)
-    valloader = torch.utils.data.DataLoader(valset, batch_size=4, shuffle=False, num_workers=num_workers)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=4, shuffle=False, num_workers=num_workers)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    valloader = torch.utils.data.DataLoader(valset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     return trainset, valset, testset, trainloader, valloader, testloader
 
@@ -220,15 +220,24 @@ def main(args):
     epochs = args.epochs
     protected_attr = args.protected_attr
     prediction_attr = args.prediction_attr
+    batch_size = args.batch_size
 
     protected_index = descriptions.index(protected_attr)
     prediction_index = descriptions.index(prediction_attr)
 
-    _, _, _, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
+
+<< << << < HEAD
+   _, _, _, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
                                                               testsize=testsize,
                                                               num_workers=num_workers)
+== == == =
+   trainset, valset, testset, trainloader, valloader, testloader = load_celeba(trainsize=trainsize,
+                                                                                testsize=testsize,
+                                                                                num_workers=num_workers,
+                                                                                batch_size=batch_size)
+>>>>>> > 95083b2d6be58ed19c8cd5dfc54bf7477f3ecc15
 
-    if print_priors:
+   if print_priors:
         compute_priors(testloader, protected_index, prediction_index)
 
     net = get_resnet_model()
@@ -338,6 +347,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=2, help='Number of epochs')
     parser.add_argument('--trainsize', type=int, default=5000, help='Size of training set')
     parser.add_argument('--testsize', type=int, default=1000, help='Size of test set')
+    parser.add_argument('--batch_size', type=int, default=4, help='batch size')
     parser.add_argument('--num_workers', type=int, default=2, help='Number of worker threads')
     parser.add_argument('--print_priors', type=bool, default=True, help='Compute the prior percents')
     parser.add_argument('--protected_attr', type=str, default='Black', help='Protected class')
