@@ -432,7 +432,7 @@ def main(config):
 
         torch.save(actor.state_dict(), config['adversarial']['checkpoint'])
 
-    with open(config['name'], 'w') as filehandler:
+    with open(config['output'], 'w') as filehandler:
         json.dump(results, filehandler)
 
 
