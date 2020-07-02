@@ -12,7 +12,7 @@ import yaml
 from sklearn.metrics import roc_auc_score
 from torchvision import models, transforms
 
-from celeb_race import CelebRace, unambiguous_bw
+from celeb_race import CelebRace, unambiguous
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
