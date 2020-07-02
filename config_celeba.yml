@@ -1,5 +1,5 @@
 ---
-    epochs: 10
+    epochs: 100
     trainsize: -1
     testsize: -1
     batch_size: 32
