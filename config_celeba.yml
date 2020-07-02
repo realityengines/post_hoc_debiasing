@@ -5,8 +5,16 @@
     batch_size: 4
     num_workers: 2
     print_priors: True
-    protected_attr: 'Black'
-    prediction_attr: 'Attractive'
-    checkpoint: 'checkpoint.pt'
+    protected_attr: Black
+    prediction_attr: Attractive
+    checkpoint: checkpoint.pt
     models:
         - random
+        - adversarial
+    random:
+        checkpoint: random_checkpoint.pt
+    adversarial:
+        epochs: 10
+        critic_steps: 300
+        actor_steps: 100
+        lambda: 0.75

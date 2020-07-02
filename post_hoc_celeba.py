@@ -114,6 +114,11 @@ def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint,
 
         best_acc, _ = val_model(model, valloader, get_best_accuracy, protected_index, prediction_index)
         print(f"Best Accuracy on Validation set: {best_acc}")
+        torch.save({
+            'epoch': epochs,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+        }, checkpoint)
 
 
 def val_model(model, loader, criterion, protected_index, prediction_index):
@@ -150,7 +155,7 @@ def compute_priors(data, protected_index, prediction_index):
 
 def compute_bias(y_pred, y_true, priv, metric):
     def zero_if_nan(x):
-        return 0. if np.isnan(x) else x
+        return 0. if torch.isnan(x) else x
 
     gtpr_priv = zero_if_nan(y_pred[priv * y_true == 1].mean())
     gfpr_priv = zero_if_nan(y_pred[priv * (1-y_true) == 1].mean())
@@ -286,10 +291,12 @@ def main(config):
 
         rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
 
-    print('roc auc', rocauc_score)
-    print('accuracy with best thresh', acc)
-    print('aod', bias.item())
-    print('objective', obj.item())
+        print('roc auc', rocauc_score)
+        print('accuracy with best thresh', acc)
+        print('aod', bias.item())
+        print('objective', obj.item())
+
+        torch.save(best_model.state_dict(), config['random']['checkpoint'])
 
     if 'adversarial' in config['models']:
         base_model = copy.deepcopy(net)
@@ -299,13 +306,17 @@ def main(config):
         actor.to(device)
         actor_optimizer = optim.Adam(actor.parameters())
         actor_loss_fn = nn.BCEWithLogitsLoss()
+        actor_loss = 0.
+        actor_steps = config['adversarial']['actor_steps']
 
-        critic = Critic(net.fc.in_features)
+        critic = Critic(config['batch_size']*net.fc.in_features)
         critic.to(device)
         critic_optimizer = optim.Adam(critic.parameters())
         critic_loss_fn = nn.MSELoss()
+        critic_loss = 0.
+        critic_steps = config['adversarial']['critic_steps']
 
-        for epoch in range(100):
+        for epoch in range(config['adversarial']['epochs']):
             for param in critic.parameters():
                 param.requires_grad = True
             for param in actor.parameters():
@@ -313,22 +324,26 @@ def main(config):
             actor.eval()
             critic.train()
             for step, (inputs, labels) in enumerate(valloader):
-                if step >= 300:
+                if step > critic_steps:
                     break
                 inputs, labels = inputs.to(device), labels.to(device)
                 critic_optimizer.zero_grad()
 
                 with torch.no_grad():
-                    scores = actor(inputs)
+                    y_pred = actor(inputs)
 
-                bias = compute_bias(scores, labels, labels, 'aod')
-                res = critic(actor(inputs))
-                loss = critic_loss_fn(torch.as_tensor([bias]), res[0])
+                y_true = labels[:, prediction_index].float().to(device)
+                y_prot = labels[:, protected_index].float().to(device)
+
+                bias = compute_bias(y_pred, y_true, y_prot, 'aod')
+                res = critic(base_model(inputs))
+                loss = critic_loss_fn(bias.unsqueeze(0), res[0])
                 loss.backward()
-                train_loss = loss.item()
+                critic_loss += loss.item()
                 critic_optimizer.step()
                 if step % 100 == 0:
-                    print(f'=======> Epoch: {(epoch, step)} Critic loss: {train_loss}')
+                    print_loss = critic_loss if (epoch*critic_steps + step) == 0 else critic_loss / (epoch*critic_steps + step)
+                    print(f'=======> Epoch: {(epoch, step)} Critic loss: {print_loss:.3f}')
 
             for param in critic.parameters():
                 param.requires_grad = False
@@ -337,22 +352,26 @@ def main(config):
             actor.train()
             critic.eval()
             for step, (inputs, labels) in enumerate(valloader):
-                if step >= 100:
+                if step > actor_steps:
                     break
                 inputs, labels = inputs.to(device), labels.to(device)
                 actor_optimizer.zero_grad()
 
-                lam = 0.75
+                y_true = labels[:, prediction_index].float().to(device)
+                y_prot = labels[:, protected_index].float().to(device)
 
-                bias = critic(actor(inputs))
-                loss = actor_loss_fn(actor(inputs)[:, 0], labels)
-                loss = lam*abs(bias) + (1-lam)*loss
+                lam = config['adversarial']['lambda']
+
+                est_bias = critic(base_model(inputs))
+                loss = actor_loss_fn(actor(inputs)[:, 0], y_true)
+                loss = lam*abs(est_bias) + (1-lam)*loss
 
                 loss.backward()
-                train_loss = loss.item()
+                actor_loss += loss.item()
                 actor_optimizer.step()
                 if step % 100 == 0:
-                    print(f'=======> Epoch: {(epoch, step)} Actor loss: {train_loss}')
+                    print_loss = critic_loss if (epoch*actor_steps + step) == 0 else critic_loss / (epoch*actor_steps + step)
+                    print(f'=======> Epoch: {(epoch, step)} Actor loss: {print_loss:.3f}')
 
 
 if __name__ == "__main__":
