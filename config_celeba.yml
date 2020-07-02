@@ -1,21 +1,23 @@
 ---
+    output: black_young.json
     epochs: 100
-    trainsize: -1
-    testsize: -1
+    trainsize: 30000
+    testsize: 1000
     batch_size: 32
-    num_workers: 4
+    num_workers: 2
     print_priors: True
     protected_attr: Black
     prediction_attr: Young
-    checkpoint: checkpoint.pt
+    checkpoint: by_checkpoint.pt
+    retrain: False
     models:
         - random
         - adversarial
     random:
-        checkpoint: random_checkpoint.pt
+        checkpoint: by_random_checkpoint.pt
     adversarial:
         epochs: 10
         critic_steps: 300
         actor_steps: 100
         lambda: 0.75
-        checkpoint: adversarial_checkpoint.pt
+        checkpoint: by_adversarial_checkpoint.pt

@@ -1,5 +1,11 @@
+"""
+post_hoc_celeba.py
+
+Debias image models trained on celeba
+"""
 import argparse
 import copy
+import json
 import math
 from pathlib import Path
 
@@ -31,6 +37,7 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
 
 
 def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batch_size=4):
+    """Load CelebA dataset"""
     transform = transforms.Compose([
         transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
@@ -60,6 +67,7 @@ def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batc
 
 
 def get_resnet_model():
+    """Get Pretrained resnet model"""
     resnet18 = models.resnet18(pretrained=True)
     num_ftrs = resnet18.fc.in_features
     resnet18.fc = nn.Linear(num_ftrs, 2)
@@ -68,6 +76,7 @@ def get_resnet_model():
 
 
 def get_best_accuracy(y_true, y_pred, _):
+    """Select threshold that maximizes accuracy"""
     threshs = torch.linspace(0, 1, 1001)
     best_acc, best_thresh = 0., 0.
     for thresh in threshs:
@@ -78,6 +87,7 @@ def get_best_accuracy(y_true, y_pred, _):
 
 
 def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=2, start_epoch=0):
+    """Fine-tune resnet model on dataset"""
     best_acc, best_model, patience = 0., None, 10
     for epoch in range(start_epoch, epochs):
         print('Epoch {}/{}'.format(epoch+1, epochs))
@@ -128,6 +138,7 @@ def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint,
 
 
 def val_model(model, loader, criterion, protected_index, prediction_index):
+    """Validate model on loader with criterion function"""
     y_true, y_pred, y_prot = [], [], []
     with torch.no_grad():
         for inputs, labels in loader:
@@ -140,6 +151,7 @@ def val_model(model, loader, criterion, protected_index, prediction_index):
 
 
 def compute_priors(data, protected_index, prediction_index):
+    """Compute priors on the data"""
     counts = np.zeros((2, 2))
     for batch in list(data):
         _, labels = batch[0], batch[1]
@@ -160,8 +172,10 @@ def compute_priors(data, protected_index, prediction_index):
 
 
 def compute_bias(y_pred, y_true, priv, metric):
-    def zero_if_nan(x):
-        return 0. if torch.isnan(x) else x
+    """Compute bias on the dataset"""
+    def zero_if_nan(data):
+        """Zero if there is a nan"""
+        return 0. if torch.isnan(data) else data
 
     gtpr_priv = zero_if_nan(y_pred[priv * y_true == 1].mean())
     gfpr_priv = zero_if_nan(y_pred[priv * (1-y_true) == 1].mean())
@@ -180,6 +194,7 @@ def compute_bias(y_pred, y_true, priv, metric):
 
 
 def get_objective_with_best_accuracy(y_true, y_pred, y_prot):
+    """Get objective for best accuracy threshold"""
     rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
     best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot)
     bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
@@ -188,6 +203,7 @@ def get_objective_with_best_accuracy(y_true, y_pred, y_prot):
 
 
 def get_best_objective(y_true, y_pred, y_prot):
+    """Find the threshold for the best objective"""
     threshs = torch.linspace(0, 1, 501)
     best_obj, best_thresh = math.inf, 0.
     for thresh in threshs:
@@ -200,7 +216,9 @@ def get_best_objective(y_true, y_pred, y_prot):
 
 
 def get_objective_results(best_thresh):
+    """Get the objective results with the best_threshold"""
     def _get_results(y_true, y_pred, y_prot):
+        """Inner function to be returned"""
         rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
         acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
         bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
@@ -210,6 +228,7 @@ def get_objective_results(best_thresh):
 
 
 class Critic(nn.Module):
+    """Critic class for adversarial debiasing method"""
 
     def __init__(self, sizein, num_deep=3, hid=32):
         super().__init__()
@@ -221,16 +240,17 @@ class Critic(nn.Module):
     def forward(self, t):
         t = t.reshape(1, -1)
         t = self.fc0(t)
-        for fc in self.fcs:
-            t = F.relu(fc(t))
+        for fully_connected in self.fcs:
+            t = F.relu(fully_connected(t))
             t = self.dropout(t)
         return self.out(t)
 
 
 def main(config):
-
+    """Main Function"""
     protected_index = descriptions.index(config['protected_attr'])
     prediction_index = descriptions.index(config['prediction_attr'])
+    results = {}
 
     _, _, _, trainloader, valloader, testloader = load_celeba(
         trainsize=config['trainsize'],
@@ -251,18 +271,19 @@ def main(config):
         net.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch']
-    train_model(
-        net,
-        trainloader,
-        valloader,
-        criterion,
-        optimizer,
-        config['checkpoint'],
-        protected_index,
-        prediction_index,
-        epochs=config['epochs'],
-        start_epoch=start_epoch
-    )
+    if config['retrain']:
+        train_model(
+            net,
+            trainloader,
+            valloader,
+            criterion,
+            optimizer,
+            config['checkpoint'],
+            protected_index,
+            prediction_index,
+            epochs=config['epochs'],
+            start_epoch=start_epoch
+        )
 
     _, best_thresh = val_model(net, valloader, get_best_accuracy, protected_index, prediction_index)
     rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
@@ -271,6 +292,12 @@ def main(config):
     print('accuracy with best thresh', best_acc)
     print('aod', bias.item())
     print('objective', obj.item())
+    results['base_model'] = {
+        'roc_auc': float(rocauc_score),
+        'accuracy': float(best_acc),
+        'bias': float(bias.item()),
+        'objective': float(obj.item())
+    }
 
     if 'random' in config['models']:
         rand_result = [math.inf, None, -1]
@@ -301,6 +328,12 @@ def main(config):
         print('accuracy with best thresh', acc)
         print('aod', bias.item())
         print('objective', obj.item())
+        results['random'] = {
+            'roc_auc': float(rocauc_score),
+            'accuracy': float(acc),
+            'bias': float(bias.item()),
+            'objective': float(obj.item())
+        }
 
         torch.save(best_model.state_dict(), config['random']['checkpoint'])
 
@@ -386,8 +419,17 @@ def main(config):
         print('accuracy with best thresh', acc)
         print('aod', bias.item())
         print('objective', obj.item())
+        results['adversarial'] = {
+            'roc_auc': float(rocauc_score),
+            'accuracy': float(acc),
+            'bias': float(bias.item()),
+            'objective': float(obj.item())
+        }
 
         torch.save(actor.state_dict(), config['adversarial']['checkpoint'])
+
+    with open(config['name'], 'w') as filehandler:
+        json.dump(results, filehandler)
 
 
 if __name__ == "__main__":
@@ -395,7 +437,5 @@ if __name__ == "__main__":
     parser.add_argument("config", help="Path to configuration yaml file.")
     args = parser.parse_args()
     with open(args.config, 'r') as fh:
-        config = yaml.load(fh, Loader=yaml.FullLoader)
-
-    args = parser.parse_args()
-    main(config)
+        yaml_config = yaml.load(fh, Loader=yaml.FullLoader)
+    main(yaml_config)
