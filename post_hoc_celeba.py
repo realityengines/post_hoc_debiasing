@@ -41,9 +41,9 @@ def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batc
     trainset = CelebRace(root='./data', download=True, split='train', transform=transform)
     testset = CelebRace(root='./data', download=True, split='test', transform=transform)
 
-    # return only the images which were predicted white or black by >70%.
-    trainset = unambiguous_bw(trainset, split='train')
-    testset = unambiguous_bw(testset, split='test')
+    # return only the images which were predicted white, black, or asian by >70%.
+    trainset = unambiguous(trainset, split='train')
+    testset = unambiguous(testset, split='test')
 
     if trainsize >= 0:
         # cut down the training set

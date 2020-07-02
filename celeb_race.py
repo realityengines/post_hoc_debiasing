@@ -27,13 +27,13 @@ class CelebRace(CelebA):
         return X, torch.cat((target, new))
 
 
-def unambiguous_bw(dataset, split='train'):
+def unambiguous(dataset, split='train'):
 
     if split == 'train':
         n = 162770
     else:
         n = 19962
-    unambiguous_indices = [i for i in range(n) if (white[i] > thresh or black[i] > thresh)]
+    unambiguous_indices = [i for i in range(n) if (white[i] > thresh or black[i] > thresh or asian[i] > thresh)]
 
     return Subset(dataset, unambiguous_indices)
 
@@ -48,3 +48,4 @@ def split_check(dataset, split='train'):
     unambiguous_indices = [i for i in range(n) if (asian[i] > thresh)]
 
     return Subset(dataset, unambiguous_indices)
+
