@@ -18,3 +18,4 @@
         critic_steps: 300
         actor_steps: 100
         lambda: 0.75
+        checkpoint: adversarial_checkpoint.pt

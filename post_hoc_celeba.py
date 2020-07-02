@@ -373,6 +373,16 @@ def main(config):
                     print_loss = critic_loss if (epoch*actor_steps + step) == 0 else critic_loss / (epoch*actor_steps + step)
                     print(f'=======> Epoch: {(epoch, step)} Actor loss: {print_loss:.3f}')
 
+        _, best_thresh = val_model(actor, valloader, get_best_objective, protected_index, prediction_index)
+        rocauc_score, acc, bias, obj = val_model(actor, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
+
+        print('roc auc', rocauc_score)
+        print('accuracy with best thresh', acc)
+        print('aod', bias.item())
+        print('objective', obj.item())
+
+        torch.save(actor.state_dict(), config['adversarial']['checkpoint'])
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Args for CelebA experiments')
