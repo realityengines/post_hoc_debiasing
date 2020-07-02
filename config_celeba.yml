@@ -1,12 +1,12 @@
 ---
-    epochs: 2
-    trainsize: 5000
-    testsize: 1000
-    batch_size: 4
-    num_workers: 2
+    epochs: 10
+    trainsize: -1
+    testsize: -1
+    batch_size: 32
+    num_workers: 4
     print_priors: True
     protected_attr: Black
-    prediction_attr: Attractive
+    prediction_attr: Young
     checkpoint: checkpoint.pt
     models:
         - random

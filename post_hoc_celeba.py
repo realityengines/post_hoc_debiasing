@@ -78,6 +78,7 @@ def get_best_accuracy(y_true, y_pred, _):
 
 
 def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint, protected_index, prediction_index, epochs=2, start_epoch=0):
+    best_acc, best_model, patience = 0., None, 10
     for epoch in range(start_epoch, epochs):
         print('Epoch {}/{}'.format(epoch+1, epochs))
         print('-' * 10)
@@ -106,19 +107,24 @@ def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint,
             if (index-1) % 101 == 0:
                 num_examples = index * inputs.size(0)
                 print(f"({index}/{len(trainloader)}) Loss: {running_loss / num_examples:.4f} Acc: {running_corrects.float() / num_examples:.4f}")
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                }, checkpoint)
 
-        best_acc, _ = val_model(model, valloader, get_best_accuracy, protected_index, prediction_index)
+        acc, _ = val_model(model, valloader, get_best_accuracy, protected_index, prediction_index)
+        if acc < best_acc:
+            patience -= 1
+            if patience <= 0:
+                model.load_state_dict(best_model)
+        else:
+            best_acc = acc
+            best_model = model.state_dict()
+            patience = 10
         print(f"Best Accuracy on Validation set: {best_acc}")
         torch.save({
-            'epoch': epochs,
+            'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
         }, checkpoint)
+        if patience <= 0:
+            break
 
 
 def val_model(model, loader, criterion, protected_index, prediction_index):
