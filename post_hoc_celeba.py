@@ -33,17 +33,21 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
                 'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling',
                 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat',
                 'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie',
-                'Young', 'White', 'Black', 'Asian']
+                'Young', 'White', 'Black', 'Asian', 'Index']
 
 
-def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batch_size=4):
+def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batch_size=4, transform_type='normalize'):
     """Load CelebA dataset"""
-    transform = transforms.Compose([
-        transforms.RandomResizedCrop(input_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
+
+    if transform_type == 'normalize':
+        transform = transforms.Compose([
+            transforms.RandomResizedCrop(input_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+    else:
+        transform = transforms.ToTensor()
 
     trainset = CelebRace(root='./data', download=True, split='train', transform=transform)
     testset = CelebRace(root='./data', download=True, split='test', transform=transform)
