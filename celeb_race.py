@@ -16,8 +16,13 @@ class CelebRace(CelebA):
     def __getitem__(self, index):
 
         X, target = super().__getitem__(index)
+        ind = int(self.filename[index].split('.')[0])
 
-        augment = torch.tensor([white[index] > .501, black[index] > .501, asian[index] > .501, index+1], dtype=torch.long)
+        augment = torch.tensor([white[ind-1] > .501, 
+                                black[ind-1] > .501, 
+                                asian[ind-1] > .501, 
+                                ind, 
+                                1-target[20]], dtype=torch.long)
 
         return X, torch.cat((target, augment))
 

@@ -33,7 +33,7 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
                 'Receding_Hairline', 'Rosy_Cheeks', 'Sideburns', 'Smiling',
                 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat',
                 'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie',
-                'Young', 'White', 'Black', 'Asian', 'Index']
+                'Young', 'White', 'Black', 'Asian', 'Index', 'Female']
 
 
 def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batch_size=4, transform_type='normalize'):
