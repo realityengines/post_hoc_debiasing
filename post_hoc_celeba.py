@@ -370,6 +370,8 @@ def main(config):
                 if step > critic_steps:
                     break
                 inputs, labels = inputs.to(device), labels.to(device)
+                if inputs.size(0) != config['batch_size']:
+                    continue
                 critic_optimizer.zero_grad()
 
                 with torch.no_grad():
@@ -398,6 +400,8 @@ def main(config):
                 if step > actor_steps:
                     break
                 inputs, labels = inputs.to(device), labels.to(device)
+                if inputs.size(0) != config['batch_size']:
+                    continue
                 actor_optimizer.zero_grad()
 
                 y_true = labels[:, prediction_index].float().to(device)
@@ -432,7 +436,7 @@ def main(config):
 
         torch.save(actor.state_dict(), config['adversarial']['checkpoint'])
 
-    with open(config['name'], 'w') as filehandler:
+    with open(config['output'], 'w') as filehandler:
         json.dump(results, filehandler)
 
 
