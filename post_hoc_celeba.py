@@ -299,14 +299,17 @@ def main(config):
         print()
         print('test priors')
         compute_priors(testloader, protected_index, prediction_index)
+        print()
 
     net = get_resnet_model()
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(net.parameters())
     checkpoint_file = Path(config['checkpoint'])
+
     start_epoch = 0
     if checkpoint_file.is_file():
         checkpoint = torch.load(checkpoint_file)
+        print('loaded from', checkpoint_file)
         net.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch']
@@ -328,15 +331,26 @@ def main(config):
 
     print('val_results')
     print_objective_results(valloader, net, best_thresh, protected_index, prediction_index)
+    print()
     print('test_results')
     result_dict = print_objective_results(testloader, net, best_thresh, protected_index, prediction_index)
     print()
     results['base_model'] = result_dict
 
     if 'random' in config['models']:
+
+        best_obj, best_thresh = val_model(net, valloader, get_best_objective, protected_index, prediction_index)
+        print('val best thresh results')
+        print_objective_results(valloader, net, best_thresh, protected_index, prediction_index)
+        print()
+        print('test best thresh results')
+        result_dict = print_objective_results(testloader, net, best_thresh, protected_index, prediction_index)
+        print()
+
         rand_result = [math.inf, None, -1]
-        rand_model = copy.deepcopy(net)
+
         for iteration in range(101):
+            rand_model = copy.deepcopy(net)
             rand_model.to(device)
             for param in rand_model.parameters():
                 param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
