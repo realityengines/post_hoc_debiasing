@@ -21,6 +21,7 @@ from torchvision import models, transforms
 from celeb_race import CelebRace, unambiguous
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print('device:', device)
 torch.manual_seed(0)
 
 descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
@@ -40,6 +41,11 @@ def load_celeba(input_size=224, num_workers=2, trainsize=100, testsize=100, batc
     """Load CelebA dataset"""
 
     if transform_type == 'normalize':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+    elif transform_type == 'augmentation':
         transform = transforms.Compose([
             transforms.RandomResizedCrop(input_size),
             transforms.RandomHorizontalFlip(),
@@ -144,9 +150,11 @@ def train_model(model, trainloader, valloader, criterion, optimizer, checkpoint,
 def val_model(model, loader, criterion, protected_index, prediction_index):
     """Validate model on loader with criterion function"""
     y_true, y_pred, y_prot = [], [], []
+    model.eval()
     with torch.no_grad():
-        for inputs, labels in loader:
-            inputs, labels, protected = inputs.to(device), labels[:, prediction_index].float().to(device), labels[:, protected_index].float().to(device)
+
+        for inputs, full_labels in loader:
+            inputs, labels, protected = inputs.to(device), full_labels[:, prediction_index].float().to(device), full_labels[:, protected_index].float().to(device)
             y_true.append(labels)
             y_prot.append(protected)
             y_pred.append(torch.sigmoid(model(inputs)[:, 0]))
@@ -216,6 +224,7 @@ def get_best_objective(y_true, y_pred, y_prot):
         obj = .75*abs(bias)+(1-.75)*(1-acc)
         if obj < best_obj:
             best_obj, best_thresh = obj, thresh
+
     return best_obj, best_thresh
 
 
@@ -227,9 +236,28 @@ def get_objective_results(best_thresh):
         acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
         bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), y_prot.float().cpu(), 'aod')
         obj = .75*abs(bias)+(1-.75)*(1-acc)
+
         return rocauc_score, acc, bias, obj
     return _get_results
 
+
+def print_objective_results(dataloader, model, thresh, protected_index, prediction_index):
+
+    rocauc_score, acc, bias, obj = val_model(model, dataloader, get_objective_results(thresh), protected_index, prediction_index)
+
+    print('roc auc', rocauc_score)
+    print('accuracy with best thresh', acc)
+    print('aod', bias.item())
+    print('objective', obj.item())
+
+    result_dict = {
+        'roc_auc': float(rocauc_score),
+        'accuracy': float(acc),
+        'bias': float(bias.item()),
+        'objective': float(obj.item())
+    }
+
+    return result_dict
 
 class Critic(nn.Module):
     """Critic class for adversarial debiasing method"""
@@ -297,18 +325,13 @@ def main(config):
         )
 
     _, best_thresh = val_model(net, valloader, get_best_accuracy, protected_index, prediction_index)
-    rocauc_score, best_acc, bias, obj = val_model(net, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
 
-    print('roc auc', rocauc_score)
-    print('accuracy with best thresh', best_acc)
-    print('aod', bias.item())
-    print('objective', obj.item())
-    results['base_model'] = {
-        'roc_auc': float(rocauc_score),
-        'accuracy': float(best_acc),
-        'bias': float(bias.item()),
-        'objective': float(obj.item())
-    }
+    print('val_results')
+    print_objective_results(valloader, net, best_thresh, protected_index, prediction_index)
+    print('test_results')
+    result_dict = print_objective_results(testloader, net, best_thresh, protected_index, prediction_index)
+    print()
+    results['base_model'] = result_dict
 
     if 'random' in config['models']:
         rand_result = [math.inf, None, -1]
@@ -320,12 +343,16 @@ def main(config):
 
             rand_model.eval()
             best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective, protected_index, prediction_index)
+            print('iteration', iteration, 'obj', best_obj.item(), 'thresh', best_thresh)
+
             if best_obj < rand_result[0]:
+                print('found new best')
                 del rand_result[1]
                 rand_result = [best_obj, rand_model.state_dict(), best_thresh]
 
             if iteration % 10 == 0:
                 print(f"{iteration} / 101 trials have been sampled.")
+                print('current best obj', rand_result[0].item())
 
         # evaluate best random model
         best_model = copy.deepcopy(net)
@@ -333,18 +360,11 @@ def main(config):
         best_model.to(device)
         best_thresh = rand_result[2]
 
-        rocauc_score, acc, bias, obj = val_model(best_model, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
-
-        print('roc auc', rocauc_score)
-        print('accuracy with best thresh', acc)
-        print('aod', bias.item())
-        print('objective', obj.item())
-        results['random'] = {
-            'roc_auc': float(rocauc_score),
-            'accuracy': float(acc),
-            'bias': float(bias.item()),
-            'objective': float(obj.item())
-        }
+        print('val_results')
+        print_objective_results(valloader, best_model, best_thresh, protected_index, prediction_index)
+        print('test_results')
+        result_dict = print_objective_results(testloader, best_model, best_thresh, protected_index, prediction_index)
+        results['random'] = result_dict
 
         torch.save(best_model.state_dict(), config['random']['checkpoint'])
 
@@ -428,18 +448,12 @@ def main(config):
                     print(f'=======> Epoch: {(epoch, step)} Actor loss: {print_loss:.3f}')
 
         _, best_thresh = val_model(actor, valloader, get_best_objective, protected_index, prediction_index)
-        rocauc_score, acc, bias, obj = val_model(actor, testloader, get_objective_results(best_thresh), protected_index, prediction_index)
 
-        print('roc auc', rocauc_score)
-        print('accuracy with best thresh', acc)
-        print('aod', bias.item())
-        print('objective', obj.item())
-        results['adversarial'] = {
-            'roc_auc': float(rocauc_score),
-            'accuracy': float(acc),
-            'bias': float(bias.item()),
-            'objective': float(obj.item())
-        }
+        print('val_results')
+        print_objective_results(valloader, actor, best_thresh, protected_index, prediction_index)
+        print('test_results')
+        result_dict = print_objective_results(testloader, actor, best_thresh, protected_index, prediction_index)
+        results['adversarial'] = result_dict
 
         torch.save(actor.state_dict(), config['adversarial']['checkpoint'])
 
