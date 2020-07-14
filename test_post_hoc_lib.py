@@ -76,6 +76,7 @@ class CustomModel(DebiasModel):
         """Initialize"""
         super().__init__()
         self.lam = 0.75
+        self.bias_measure = 'aod'
         self.__protected_index = descriptions.index('Black')
         self.__prediction_index = descriptions.index('Smiling')
         self.model = get_resnet_model()

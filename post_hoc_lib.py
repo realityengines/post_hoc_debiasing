@@ -16,7 +16,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
 
 
-def val_model(model, loader, criterion, protected_index, prediction_index, lam=0.75):
+def val_model(model, loader, criterion, protected_index, prediction_index, lam=0.75, bias_measure='aod'):
     """Validate model on loader with criterion function"""
     y_true, y_pred, y_prot = [], [], []
     with torch.no_grad():
@@ -26,7 +26,7 @@ def val_model(model, loader, criterion, protected_index, prediction_index, lam=0
             y_prot.append(protected)
             y_pred.append(torch.sigmoid(model(inputs)[:, 0]))
     y_true, y_pred, y_prot = torch.cat(y_true), torch.cat(y_pred), torch.cat(y_prot)
-    return criterion(y_true, y_pred, y_prot, lam)
+    return criterion(y_true, y_pred, y_prot, lam, bias_measure)
 
 
 def get_best_accuracy(y_true, y_pred, *_):
@@ -64,11 +64,11 @@ def compute_bias(y_pred, y_true, priv, metric):
 
 def get_objective_results(best_thresh):
     """Get the objective results with the best_threshold"""
-    def _get_results(y_true, y_pred, y_prot, lam):
+    def _get_results(y_true, y_pred, y_prot, lam, bias_measure):
         """Inner function to be returned"""
         rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
         acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
-        bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), 'aod')
+        bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), bias_measure)
         obj = lam*abs(bias)+(1-lam)*(1-acc)
         return rocauc_score, acc, bias, obj
     return _get_results
@@ -93,13 +93,13 @@ class Critic(nn.Module):
         return self.out(t)
 
 
-def get_best_objective(y_true, y_pred, y_prot, lam):
+def get_best_objective(y_true, y_pred, y_prot, lam, bias_measure):
     """Find the threshold for the best objective"""
     threshs = torch.linspace(0, 1, 501)
     best_obj, best_thresh = math.inf, 0.
     for thresh in threshs:
         acc = torch.mean(((y_pred > thresh) == y_true).float()).item()
-        bias = compute_bias((y_pred > thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), 'aod')
+        bias = compute_bias((y_pred > thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), bias_measure)
         obj = lam*abs(bias)+(1-lam)*(1-acc)
         if obj < best_obj:
             best_obj, best_thresh = obj, thresh
@@ -115,6 +115,7 @@ class DebiasModel(object):
         self.best_rand_model, self.best_rand_thresh = None, 0.
         self.best_adv_model, self.best_adv_thresh = None, 0.
         self.lam = 0.75
+        self.bias_measure = 'aod'
 
     @property
     def protected_index(self):
@@ -149,7 +150,8 @@ class DebiasModel(object):
             get_objective_results(best_thresh),
             self.protected_index,
             self.prediction_index,
-            self.lam
+            self.lam,
+            self.bias_measure
         )
 
         if verbose:
@@ -309,10 +311,10 @@ class DebiasModel(object):
         return self._evaluate_model_thresh(self.best_adv_model, self.best_adv_thresh, verbose)
 
 
-def get_objective_with_best_accuracy(y_true, y_pred, y_prot, lam):
+def get_objective_with_best_accuracy(y_true, y_pred, y_prot, lam, bias_measure):
     """Get objective for best accuracy threshold"""
     rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
     best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot, lam)
-    bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), 'aod')
+    bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), bias_measure)
     obj = lam*abs(bias)+(1-lam)*(1-best_acc)
     return rocauc_score, best_acc, bias, obj

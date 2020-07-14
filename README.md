@@ -56,7 +56,9 @@ Follow the example given in `test_post_hoc_lib.py`. You will need to inherit fro
 * `def get_last_layer_name(self):`
   * This should return the name of the last layer of the model.
 
-You can also overwrite the lambda paramter used for the objective in the `__init__` constructor for your class. Once you have overwritten these methods, you can execute the following code
+You can also overwrite the lambda parameter and the bias measure you want to use for the objective in the `__init__` constructor for your class. To overwrite the lambda parameter change the `self.lam` attribue, to overwrite the bias measure change the `self.bias_measure` attribute to one of 'spd', 'eod', or 'aod'.
+
+Once you have overwritten the methods and parameters, you can execute the following code
 
 ```
 # CustomModel is a subclass of DebiasModel.
