@@ -27,7 +27,7 @@ descriptions = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive',
                 'Young', 'White', 'Black', 'Asian', 'Index', 'Female']
 
 
-def load_celeba(input_size=224, num_workers=2, trainsize=3000, testsize=500, batch_size=32, transform_type='normalize'):
+def load_celeba(input_size=224, num_workers=2, trainsize=10000, testsize=1000, batch_size=32, transform_type='normalize'):
     """Load CelebA dataset"""
 
     if transform_type == 'normalize':
@@ -75,11 +75,12 @@ class CustomModel(DebiasModel):
     def __init__(self):
         """Initialize"""
         super().__init__()
+        self.lam = 0.75
         self.__protected_index = descriptions.index('Black')
-        self.__prediction_index = descriptions.index('Young')
+        self.__prediction_index = descriptions.index('Smiling')
         self.model = get_resnet_model()
         self.model.to(device)
-        self.model.load_state_dict(torch.load('by_checkpoint.pt')['model_state_dict'])
+        self.model.load_state_dict(torch.load('bs_checkpoint.pt')['model_state_dict'])
         self.loaders = load_celeba()
 
     @property
@@ -104,17 +105,32 @@ class CustomModel(DebiasModel):
         """load model"""
         return self.model
 
+    def get_last_layer_name(self):
+        """Last fully connected layer of network."""
+        return 'fc'
+
 
 def main():
     """Main Function"""
+    # CustomModel is a subclass of DebiasModel.
     custom_model = CustomModel()
-    custom_model.evaluate_original()
+    # This returns a dictionary containing bias statistics for the original model.
+    # If verbose is True, then it prints out the bias statistics.
+    orig_data = custom_model.evaluate_original(verbose=True)
 
-    custom_model.random_debias_model()
-    custom_model.evaluate_random_debiased()
+    # This runs the random debiasing algorithm on the model and returns
+    # the random debiased model and the random threshold that will maximize the objective.
+    rand_model, rand_thresh = custom_model.random_debias_model()
+    # This returns a dictionary containing bias statistics for the random debiased model.
+    # If verbose is True, then it prints out the bias statistics.
+    rand_data = custom_model.evaluate_random_debiased(verbose=True)
 
-    custom_model.adversarial_debias_model()
-    custom_model.evaluate_adversarial_debiased()
+    # This runs the adversarial debiasing algorithm on the model and returns
+    # the adversarial debiased model and the adversarial threshold that will maximize the objective.
+    adv_model, adv_thresh = custom_model.adversarial_debias_model()
+    # This returns a dictionary containing bias statistics for the adversarial debiased model.
+    # If verbose is True, then it prints out the bias statistics.
+    adv_data = custom_model.evaluate_adversarial_debiased(verbose=True)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
 
 
-def val_model(model, loader, criterion, protected_index, prediction_index):
+def val_model(model, loader, criterion, protected_index, prediction_index, lam=0.75):
     """Validate model on loader with criterion function"""
     y_true, y_pred, y_prot = [], [], []
     with torch.no_grad():
@@ -26,10 +26,10 @@ def val_model(model, loader, criterion, protected_index, prediction_index):
             y_prot.append(protected)
             y_pred.append(torch.sigmoid(model(inputs)[:, 0]))
     y_true, y_pred, y_prot = torch.cat(y_true), torch.cat(y_pred), torch.cat(y_prot)
-    return criterion(y_true, y_pred, y_prot)
+    return criterion(y_true, y_pred, y_prot, lam)
 
 
-def get_best_accuracy(y_true, y_pred, _):
+def get_best_accuracy(y_true, y_pred, *_):
     """Select threshold that maximizes accuracy"""
     threshs = torch.linspace(0, 1, 1001)
     best_acc, best_thresh = 0., 0.
@@ -56,20 +56,20 @@ def compute_bias(y_pred, y_true, priv, metric):
 
     if metric == "spd":
         return mean_unpriv - mean_priv
-    elif metric == "aod":
+    if metric == "aod":
         return 0.5 * ((gfpr_unpriv - gfpr_priv) + (gtpr_unpriv - gtpr_priv))
-    elif metric == "eod":
+    if metric == "eod":
         return gtpr_unpriv - gtpr_priv
 
 
 def get_objective_results(best_thresh):
     """Get the objective results with the best_threshold"""
-    def _get_results(y_true, y_pred, y_prot):
+    def _get_results(y_true, y_pred, y_prot, lam):
         """Inner function to be returned"""
         rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
         acc = torch.mean(((y_pred > best_thresh) == y_true).float()).item()
         bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), 'aod')
-        obj = .75*abs(bias)+(1-.75)*(1-acc)
+        obj = lam*abs(bias)+(1-lam)*(1-acc)
         return rocauc_score, acc, bias, obj
     return _get_results
 
@@ -93,14 +93,14 @@ class Critic(nn.Module):
         return self.out(t)
 
 
-def get_best_objective(y_true, y_pred, y_prot):
+def get_best_objective(y_true, y_pred, y_prot, lam):
     """Find the threshold for the best objective"""
     threshs = torch.linspace(0, 1, 501)
     best_obj, best_thresh = math.inf, 0.
     for thresh in threshs:
         acc = torch.mean(((y_pred > thresh) == y_true).float()).item()
         bias = compute_bias((y_pred > thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), 'aod')
-        obj = .75*abs(bias)+(1-.75)*(1-acc)
+        obj = lam*abs(bias)+(1-lam)*(1-acc)
         if obj < best_obj:
             best_obj, best_thresh = obj, thresh
     return best_obj, best_thresh
@@ -108,21 +108,22 @@ def get_best_objective(y_true, y_pred, y_prot):
 
 class DebiasModel(object):
     """
-    Abstract Base Class for user to overwrite with correct information
+    Abstract Base Class for user to overwrite with custom methods
     """
 
     def __init__(self):
         self.best_rand_model, self.best_rand_thresh = None, 0.
         self.best_adv_model, self.best_adv_thresh = None, 0.
+        self.lam = 0.75
 
     @property
     def protected_index(self):
-        """Index for protected attribute"""
+        """index for protected attribute"""
         raise NotImplementedError()
 
     @property
     def prediction_index(self):
-        """Index for prediction attribute"""
+        """index for prediction attribute"""
         raise NotImplementedError()
 
     def get_valloader(self):
@@ -134,7 +135,11 @@ class DebiasModel(object):
         raise NotImplementedError()
 
     def get_model(self):
-        """load model"""
+        """get model and load weights"""
+        raise NotImplementedError()
+
+    def get_last_layer_name(self):
+        """get name of last fully connected layer of network."""
         raise NotImplementedError()
 
     def _evaluate_model_thresh(self, model, best_thresh, verbose=True):
@@ -143,7 +148,8 @@ class DebiasModel(object):
             self.get_testloader(),
             get_objective_results(best_thresh),
             self.protected_index,
-            self.prediction_index
+            self.prediction_index,
+            self.lam
         )
 
         if verbose:
@@ -172,7 +178,8 @@ class DebiasModel(object):
             self.get_valloader(),
             get_best_accuracy,
             self.protected_index,
-            self.prediction_index
+            self.prediction_index,
+            self.lam
         )
         return self._evaluate_model_thresh(self.get_model(), best_thresh, verbose)
 
@@ -190,7 +197,7 @@ class DebiasModel(object):
                 param.data = param.data * (torch.randn_like(param) * 0.1 + 1)
 
             rand_model.eval()
-            best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective, self.protected_index, self.prediction_index)
+            best_obj, best_thresh = val_model(rand_model, valloader, get_best_objective, self.protected_index, self.prediction_index, self.lam)
             if best_obj < rand_result[0]:
                 del rand_result[1]
                 rand_result = [best_obj, rand_model.state_dict(), best_thresh]
@@ -218,15 +225,16 @@ class DebiasModel(object):
         net = self.get_model()
         valloader = self.get_valloader()
         base_model = copy.deepcopy(net)
-        base_model.fc = nn.Linear(base_model.fc.in_features, base_model.fc.in_features)
+        base_last_layer = base_model.__getattr__(self.get_last_layer_name())
+        base_model.__setattr__(self.get_last_layer_name(), nn.Linear(base_last_layer.in_features, base_last_layer.in_features))
 
-        actor = nn.Sequential(base_model, nn.Linear(base_model.fc.in_features, 2))
+        actor = nn.Sequential(base_model, nn.Linear(base_last_layer.in_features, 2))
         actor.to(device)
         actor_optimizer = optim.Adam(actor.parameters())
         actor_loss_fn = nn.BCEWithLogitsLoss()
         actor_loss = 0.
 
-        critic = Critic(batch_size*net.fc.in_features)
+        critic = Critic(batch_size*base_last_layer.in_features)
         critic.to(device)
         critic_optimizer = optim.Adam(critic.parameters())
         critic_loss_fn = nn.MSELoss()
@@ -253,7 +261,7 @@ class DebiasModel(object):
                 y_true = labels[:, self.prediction_index].float().to(device)
                 y_prot = labels[:, self.protected_index].float().to(device)
 
-                bias = compute_bias(y_pred, y_true, y_prot, 'aod')
+                bias = compute_bias(y_pred, y_true, 1-y_prot, 'aod')
                 res = critic(base_model(inputs))
                 loss = critic_loss_fn(bias.unsqueeze(0), res[0])
                 loss.backward()
@@ -291,7 +299,7 @@ class DebiasModel(object):
                     print_loss = critic_loss if (epoch*actor_steps + step) == 0 else critic_loss / (epoch*actor_steps + step)
                     print(f'=======> Epoch: {(epoch, step)} Actor loss: {print_loss:.3f}')
 
-        _, best_thresh = val_model(actor, valloader, get_best_objective, self.protected_index, self.prediction_index)
+        _, best_thresh = val_model(actor, valloader, get_best_objective, self.protected_index, self.prediction_index, self.lam)
 
         self.best_adv_model, self.best_adv_thresh = actor, best_thresh
         return self.best_adv_model, self.best_adv_thresh
@@ -301,10 +309,10 @@ class DebiasModel(object):
         return self._evaluate_model_thresh(self.best_adv_model, self.best_adv_thresh, verbose)
 
 
-def get_objective_with_best_accuracy(y_true, y_pred, y_prot):
+def get_objective_with_best_accuracy(y_true, y_pred, y_prot, lam):
     """Get objective for best accuracy threshold"""
     rocauc_score = roc_auc_score(y_true.cpu(), y_pred.cpu())
-    best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot)
+    best_acc, best_thresh = get_best_accuracy(y_true, y_pred, y_prot, lam)
     bias = compute_bias((y_pred > best_thresh).float().cpu(), y_true.float().cpu(), 1-y_prot.float().cpu(), 'aod')
-    obj = .75*abs(bias)+(1-.75)*(1-best_acc)
+    obj = lam*abs(bias)+(1-lam)*(1-best_acc)
     return rocauc_score, best_acc, bias, obj
