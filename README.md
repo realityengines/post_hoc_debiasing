@@ -25,7 +25,64 @@ Install the requirements using
 $ pip install -r requirements.txt
 ```
 
-## Run a Post-Hoc debiasing experiment
+## How to debias your own neural network
+### What you need:
+* Model architecture (currently supported PyTorch Module)
+* Model checkpoint (currently supported file type: .pt)
+* Validation dataset that you are going to debias based on
+  * Very simple if your model uses one of these 10 datasets https://pytorch.org/docs/stable/torchvision/datasets.html
+  * For a custom dataset, make a quick DataLoader class using this tutorial https://pytorch.org/tutorials/beginner/data_loading_tutorial.html 
+* Protected attribute (e.g., “race”)
+* Prediction attribute (e.g., “smiling”)
+* (optional) tunable bias parameter lambda 
+  * lambda=0.9 means, I want my model to be almost fully debiased 
+  * lambda=0.1 means, I care a lot about accuracy and minimally about debiasing
+  * We recommend lambda between 0.5 and 0.75 
+
+### Steps to debias your model
+
+Follow the example given in `test_post_hoc_lib.py`. You will need to inherit from `DebiasModel` class in `post_hoc_lib.py` and overwrite the following methods with appropriate ones for your model:
+
+* `def get_valloader(self):`
+  * This should return a `torch.utils.data.DataLoader` that iterates over your validation set. Each iteration should return an input batch and an output binary batch vector that includes the protected attribute and prediction attribute along some index.
+* `def get_testloader(self):`
+  * This should return a `torch.utils.data.DataLoader` with the same parameters as the valloader, except with the test set. This is used for evaluation of the models
+* `def protected_index(self):`
+  * This should return the index for your protected attribute
+* `def prediction_index(self):`
+  * This should return the index for your prediction attribute
+* `def get_model(self):`
+  * This should return the model architecture with the loaded weights from the checkpoint
+* `def get_last_layer_name(self):`
+  * This should return the name of the last layer of the model.
+
+You can also overwrite the lambda parameter and the bias measure you want to use for the objective in the `__init__` constructor for your class. To overwrite the lambda parameter change the `self.lam` attribue, to overwrite the bias measure change the `self.bias_measure` attribute to one of 'spd', 'eod', or 'aod'.
+
+Once you have overwritten the methods and parameters, you can execute the following code
+
+```
+# CustomModel is a subclass of DebiasModel.
+custom_model = CustomModel()
+# This returns a dictionary containing bias statistics for the original model.
+# If verbose is True, then it prints out the bias statistics.
+orig_data = custom_model.evaluate_original(verbose=True)
+
+# This runs the random debiasing algorithm on the model and returns
+# the random debiased model and the random threshold that will minimize the objective.
+rand_model, rand_thresh = custom_model.random_debias_model()
+# This returns a dictionary containing bias statistics for the random debiased model.
+# If verbose is True, then it prints out the bias statistics.
+rand_data = custom_model.evaluate_random_debiased(verbose=True)
+
+# This runs the adversarial debiasing algorithm on the model and returns
+# the adversarial debiased model and the adversarial threshold that will minimize the objective.
+adv_model, adv_thresh = custom_model.adversarial_debias_model()
+# This returns a dictionary containing bias statistics for the adversarial debiased model.
+# If verbose is True, then it prints out the bias statistics.
+adv_data = custom_model.evaluate_adversarial_debiased(verbose=True)
+```
+
+## Run our Post-Hoc debiasing experiments
 
 ### Step 1 - Create Configs
 Create a config yaml file required to run the experiment by running 
