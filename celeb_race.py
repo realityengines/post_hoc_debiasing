@@ -18,10 +18,10 @@ class CelebRace(CelebA):
         X, target = super().__getitem__(index)
         ind = int(self.filename[index].split('.')[0])
 
-        augment = torch.tensor([white[ind-1] > .501, 
-                                black[ind-1] > .501, 
-                                asian[ind-1] > .501, 
-                                ind, 
+        augment = torch.tensor([white[ind-1] > .501,
+                                black[ind-1] > .501,
+                                asian[ind-1] > .501,
+                                ind,
                                 1-target[20]], dtype=torch.long)
 
         return X, torch.cat((target, augment))
@@ -47,4 +47,3 @@ def split_check(dataset, split='train', thresh=.7):
     unambiguous_indices = [i for i in range(n) if (asian[i] > thresh)]
 
     return Subset(dataset, unambiguous_indices)
-
