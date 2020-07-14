@@ -120,14 +120,14 @@ def main():
     orig_data = custom_model.evaluate_original(verbose=True)
 
     # This runs the random debiasing algorithm on the model and returns
-    # the random debiased model and the random threshold that will maximize the objective.
+    # the random debiased model and the random threshold that will minimize the objective.
     rand_model, rand_thresh = custom_model.random_debias_model()
     # This returns a dictionary containing bias statistics for the random debiased model.
     # If verbose is True, then it prints out the bias statistics.
     rand_data = custom_model.evaluate_random_debiased(verbose=True)
 
     # This runs the adversarial debiasing algorithm on the model and returns
-    # the adversarial debiased model and the adversarial threshold that will maximize the objective.
+    # the adversarial debiased model and the adversarial threshold that will minimize the objective.
     adv_model, adv_thresh = custom_model.adversarial_debias_model()
     # This returns a dictionary containing bias statistics for the adversarial debiased model.
     # If verbose is True, then it prints out the bias statistics.
